@@ -1,0 +1,63 @@
+// uses V3.0 of the Protocol Buffer Specification
+syntax = "proto3";
+
+message ServerToClient
+{
+	enum Type {
+		// Define types
+		DOS_SALT = 0;
+	    SERVER_PUBKEY = 1;
+	    REPLY_QUERY = 2;
+	    INVALID = 3;
+	}
+
+	Type type = 1; // Type of this specific message
+
+    string challenge = 2;
+    string salt = 3;
+    string public_key = 4;
+    string private_key = 5;
+    string ip = 6;
+    string port = 7;
+    string name = 8;
+}
+
+message ClientToServer
+{
+	enum Type {
+		// Define types
+		INITIATOR = 0;
+		USER_PUBKEY = 1;
+	    USER_SIGN = 2;
+	    QUERY_PEER = 3;
+	}
+
+	Type type = 1; // Type of this specific message
+
+	string name = 2;
+    string challenge = 3;
+    string public_key = 4;
+    string hash = 5;
+    string sign = 6;
+    string ip = 7;
+    string port = 8;
+}
+
+message ClientToClient
+{
+	enum Type {
+		// Define types
+		SENDER_PUB = 0;
+		RECVER_PUB = 1;
+	    SENDER_IDENTITY = 2;
+	    RECVER_IDENTITY = 3;
+	    MESSAGE = 4;
+	}
+
+	Type type = 1; // Type of this specific message
+
+	string name = 2;
+    string public_key = 3;
+    string sign = 4;
+    string msg = 5;
+}
