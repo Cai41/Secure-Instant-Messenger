@@ -1,28 +1,23 @@
 #!/usr/bin/env python
 
-# A very basic program demonstrating protobuf with sockets
-# Note that it does not catch any exceptions and of course
-# it is very insecure as executes remote commands :)
-#
-# This is the client side
-
 import select
 import socket
-from instant_messenger_pb2 import *
-from cryptography.hazmat.primitives.asymmetric import ec, padding
-from cryptography.hazmat.backends import default_backend
-import utils
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives import hashes
 import base64
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 import random
 import threading
 import os
+import utils
+from utils import b64encode_aes_ctr
+from instant_messenger_pb2 import *   # import the module created by protobuf for creating messages
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec, padding
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 
 IP_ADDR = '127.0.0.1'  # use loopback interface
-TCP_PORT = 5055			# TCP port of server
+TCP_PORT = 5055  # TCP port of server
 BUFFER_SIZE = 10240
 
 
@@ -40,6 +35,8 @@ class Client:
         self.conn_info = {}
         self.client_socks = [self.listen_sock]
 
+        self.server_expect = {'List': False, 'Query': set(), 'Logout': False}
+
         rqst = ClientToServer()
         rqst.type = ClientToServer.INITIATOR
         rqst.name = name
@@ -53,6 +50,7 @@ class Client:
         self.private_key = None
         self.name = name
         self.password = password
+        self.login = False
 
     def __initiate_auth(self, name):
         client_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -67,21 +65,34 @@ class Client:
         print 'send peer auth1'
 
     def __handle_server_sock(self):
-        while 1:
-            cipher_data = base64.b64decode(self.server_sock.recv(BUFFER_SIZE))
+        while self.login:
+            data_rcved = self.server_sock.recv(BUFFER_SIZE)
+            cipher_data = base64.b64decode(data_rcved)
             data = utils.aes_ctr_decrypt(cipher_data[16:], self.dh_shared, cipher_data[:16])
             rply = ServerToClient()
             rply.ParseFromString(data)
-            if rply.type == self.peer_info[rply.name]['expect']:
-                print rply.ip, rply.port
+            if rply.type == ServerToClient.LOGOUT and self.server_expect['Logout']:
+                self.login = False
+                self.server_sock.close()
+                return
+            if rply.type == ServerToClient.REPLY_LIST and self.server_expect['List']:
+                self.server_expect['List'] = False
+                online_users = []
+                for online_user in rply.name_list:
+                    online_users.append(online_user)
+                print ', '.join(online_users)
+            elif rply.type == ServerToClient.REPLY_QUERY and rply.name in self.server_expect['Query']:
+                self.server_expect['Query'].remove(rply.name)
+                # update meta data, in case of peer re-login or changing public key
                 self.peer_info[rply.name]['pub'] = utils.deserialize_public_key(base64.b64decode(rply.public_key))
+                self.peer_info[rply.name]['ip'] = rply.ip
+                self.peer_info[rply.name]['port'] = rply.port
+
+                # if we are the sender, then we haven't established connection with this peer
                 if 'conn' not in self.peer_info[rply.name]:
-                    self.peer_info[rply.name]['expect'] = None
-                    self.peer_info[rply.name]['ip'] = rply.ip
-                    self.peer_info[rply.name]['port'] = rply.port
                     print 'receive pub key as sender to', rply.name
                     self.__initiate_auth(rply.name)
-                else:
+                else:   # if we are receiver, then we already establish the connection
                     conn = self.peer_info[rply.name]['conn']
                     self.peer_info[rply.name]['pub'].verify(
                         base64.b64decode(self.conn_info[conn]['sign']),
@@ -97,9 +108,72 @@ class Client:
                     print 'receive pub key as receiver to', rply.name
                     print 'and send identity'
 
+    def __handle_sender_pub(self, rqst, s):
+        sender_dh_pub_key_bytes = base64.b64decode(rqst.public_key)
+        sender_dh_pub_key = utils.deserialize_public_key(sender_dh_pub_key_bytes)
+        rcver_dh_private_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
+        shared_key = rcver_dh_private_key.exchange(ec.ECDH(), sender_dh_pub_key)
+        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+        digest.update(shared_key)
+        dh_shared = digest.finalize()
+
+        self.conn_info[s] = {'shared_dh': dh_shared, 'expect': ClientToClient.SENDER_IDENTITY,
+                             'rcver_dh_private': rcver_dh_private_key,
+                             'sender_dh_pub_bytes': sender_dh_pub_key_bytes}
+
+        self.__send_dh_pub(rcver_dh_private_key, ClientToClient.RECVER_PUB, s)
+        print 'send dh pub as receiver'
+
+    def __handle_recver_pub(self, rqst, s):
+        rcver_dh_pub_bytes = base64.b64decode(rqst.public_key)
+        recver_pub = utils.deserialize_public_key(rcver_dh_pub_bytes)
+        shared_key = self.conn_info[s]['sender_dh_private'].exchange(ec.ECDH(), recver_pub)
+        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+        digest.update(shared_key)
+        self.conn_info[s]['shared_dh'] = digest.finalize()
+        self.conn_info[s]['expect'] = ClientToClient.RECVER_IDENTITY
+        self.conn_info[s]['rcver_dh_pub_bytes'] = rcver_dh_pub_bytes
+
+        self.__send_identity(self.conn_info[s]['sender_dh_private'],
+                             ClientToClient.SENDER_IDENTITY, s)
+        print 'send identity as sender to ', self.conn_info[s]['name']
+
+    def __handle_sender_identiy(self, rqst, s):
+        self.conn_info[s]['name'] = rqst.name
+        self.conn_info[s]['sign'] = rqst.sign
+        # Do not use self.peer_info[rqst.name] = {'conn':s}
+        # Since if client is sending to himself, it will override the self.peer_info[rqst.name]
+        if rqst.name not in self.peer_info:
+            self.peer_info[rqst.name] = {}
+        self.peer_info[rqst.name]['conn'] = s
+        self.server_expect['Query'].add(rqst.name)
+        rqst1 = ClientToServer()
+        rqst1.type = ClientToServer.QUERY_PEER
+        rqst1.name = rqst.name
+        self.server_sock.send(b64encode_aes_ctr(rqst1.SerializeToString(), self.dh_shared))
+        print 'query server as receiver for peer', rqst1.name
+
+    def __handle_recver_identity(self, rqst, s):
+        self.peer_info[rqst.name]['pub'].verify(
+            base64.b64decode(rqst.sign),
+            self.conn_info[s]['rcver_dh_pub_bytes'],
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
+        print 'verify receiver identity'
+        chat_msg = ClientToClient()
+        chat_msg.type = ClientToClient.MESSAGE
+        print 'rqst.name', rqst.name
+        print self.peer_info
+        chat_msg.msg = self.peer_info[rqst.name]['msg']
+        s.send(b64encode_aes_ctr(chat_msg.SerializeToString(), self.conn_info[s]['shared_dh']))
+
     def __handle_peer_sock(self):
-        while 1:
-            readable, _, _ = select.select(self.client_socks, [], [], 2)
+        while self.login:
+            readable, _, _ = select.select(self.client_socks, [], [], 1)
             for s in readable:
                 if s is self.listen_sock:
                     conn, address = self.listen_sock.accept()  # accept connection from client
@@ -109,87 +183,38 @@ class Client:
                 else:
                     rqst = ClientToClient()
                     data = s.recv(BUFFER_SIZE)
-                    if 'shared_dh' not in self.conn_info[s]:
+                    if len(data) == 0:
+                        # delete the meta data immediately
+                        s.close()
+                        # If client sends to himself, then self.peer_info[name] is already
+                        # popped when receiving ClientToClient.MESSAGE
+                        self.peer_info.pop(self.conn_info[s]['name'], None)
+                        self.conn_info.pop(s)
+                        self.client_socks.remove(s)
+                        print 'delete socket on receiving empty packet'
+                    elif 'shared_dh' not in self.conn_info[s]:
                         rqst.ParseFromString(data)
                         if rqst.type == ClientToClient.SENDER_PUB:
-                            sender_dh_pub_key_bytes = base64.b64decode(rqst.public_key)
-                            sender_dh_pub_key = utils.deserialize_public_key(sender_dh_pub_key_bytes)
-                            rcver_dh_private_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
-                            shared_key = rcver_dh_private_key.exchange(ec.ECDH(), sender_dh_pub_key)
-                            digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
-                            digest.update(shared_key)
-                            dh_shared = digest.finalize()
-
-                            self.conn_info[s] = {'shared_dh': dh_shared, 'expect': ClientToClient.SENDER_IDENTITY,
-                                                 'rcver_dh_private': rcver_dh_private_key,
-                                                 'sender_dh_pub_bytes': sender_dh_pub_key_bytes}
-
-                            self.__send_dh_pub(rcver_dh_private_key, ClientToClient.RECVER_PUB, s)
-                            print 'send dh pub as receiver'
+                            self.__handle_sender_pub(rqst, s)
                         elif rqst.type == ClientToClient.RECVER_PUB:
-                            rcver_dh_pub_bytes = base64.b64decode(rqst.public_key)
-                            recver_pub = utils.deserialize_public_key(rcver_dh_pub_bytes)
-                            shared_key = self.conn_info[s]['sender_dh_private'].exchange(ec.ECDH(), recver_pub)
-                            digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
-                            digest.update(shared_key)
-                            self.conn_info[s]['shared_dh'] = digest.finalize()
-                            self.conn_info[s]['expect'] = ClientToClient.RECVER_IDENTITY
-                            self.conn_info[s]['rcver_dh_pub_bytes'] = rcver_dh_pub_bytes
-
-                            self.__send_identity(self.conn_info[s]['sender_dh_private'],
-                                                 ClientToClient.SENDER_IDENTITY, s)
-                            print 'send identity as sender to ', self.conn_info[s]['name']
+                            self.__handle_recver_pub(rqst, s)
                         else:
                             print 'drop...', rqst.type
                     else:
-                        iv, cipher_content = data[:16], data[16:]
+                        decoded_data = base64.b64decode(data)
+                        iv, cipher_content = decoded_data[:16], decoded_data[16:]
                         content = utils.aes_ctr_decrypt(cipher_content, self.conn_info[s]['shared_dh'], iv)
                         rqst.ParseFromString(content)
                         if rqst.type == ClientToClient.SENDER_IDENTITY:
-                            self.conn_info[s]['name'] = rqst.name
-                            if rqst.name not in self.peer_info:
-                                self.conn_info[s]['sign'] = rqst.sign
-                                self.peer_info[rqst.name] = {'expect': ServerToClient.REPLY_QUERY, 'conn': s}
-                                rqst1 = ClientToServer()
-                                rqst1.type = ClientToServer.QUERY_PEER
-                                rqst1.name = rqst.name
-                                iv = os.urandom(16)
-                                cipher_query = utils.aes_ctr_encrypt(rqst1.SerializeToString(), self.dh_shared, iv)
-                                self.server_sock.send(base64.b64encode(iv + cipher_query))
-                                print 'query server as receiver for peer', rqst1.name
-                            else:
-                                self.peer_info[rqst.name]['pub'].verify(
-                                    base64.b64decode(rqst.sign),
-                                    self.conn_info[s]['sender_dh_pub_bytes'],
-                                    padding.PSS(
-                                        mgf=padding.MGF1(hashes.SHA256()),
-                                        salt_length=padding.PSS.MAX_LENGTH
-                                    ),
-                                    hashes.SHA256()
-                                )
-                                self.__send_identity(self.conn_info[s]['rcver_dh_private'],
-                                                     ClientToClient.RECVER_IDENTITY, s)
-                                print 'send identity as sender'
+                            self.__handle_sender_identiy(rqst, s)
                         elif rqst.type == ClientToClient.RECVER_IDENTITY:
-                            self.peer_info[rqst.name]['pub'].verify(
-                                base64.b64decode(rqst.sign),
-                                self.conn_info[s]['rcver_dh_pub_bytes'],
-                                padding.PSS(
-                                    mgf=padding.MGF1(hashes.SHA256()),
-                                    salt_length=padding.PSS.MAX_LENGTH
-                                ),
-                                hashes.SHA256()
-                            )
-                            print 'verify receiver identity'
-                            chat_msg = ClientToClient()
-                            chat_msg.type = ClientToClient.MESSAGE
-                            chat_msg.msg = self.peer_info[rqst.name]['msg']
-                            iv1 = os.urandom(16)
-                            cipher_msg = utils.aes_ctr_encrypt(chat_msg.SerializeToString(),
-                                                               self.conn_info[s]['shared_dh'], iv1)
-                            s.send(iv1 + cipher_msg)
+                            self.__handle_recver_identity(rqst, s)
                         elif rqst.type == ClientToClient.MESSAGE:
                             print self.conn_info[s]['name'] + ": " + rqst.msg
+                            s.close()
+                            self.client_socks.remove(s)
+                            self.peer_info.pop(self.conn_info[s]['name'])
+                            self.conn_info.pop(s)
                         else:
                             print 'drop....'
 
@@ -203,9 +228,7 @@ class Client:
         s.send(rply.SerializeToString())
 
     def __send_identity(self, dh_private, rply_type, s):
-        dh_public_key_bytes = dh_private.public_key() \
-            .public_bytes(Encoding.DER,
-                          PublicFormat.SubjectPublicKeyInfo)
+        dh_public_key_bytes = dh_private.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
         sign = self.private_key.sign(
             dh_public_key_bytes,
             padding.PSS(
@@ -220,11 +243,7 @@ class Client:
         rply.sign = base64.b64encode(sign)
         rply.name = self.name
         # rply.public_key = base64.b64encode(sender_dh_public_key_bytes)
-
-        iv = os.urandom(16)
-        cipher_content = utils.aes_ctr_encrypt(rply.SerializeToString(),
-                                               self.conn_info[s]['shared_dh'], iv)
-        s.send(iv + cipher_content)
+        s.send(b64encode_aes_ctr(rply.SerializeToString(), self.conn_info[s]['shared_dh']))
 
     def __handle_dos_salt(self, rqst, rply):
         self.w1_salt = base64.b64decode(rply.salt)
@@ -291,6 +310,26 @@ class Client:
         self.server_sock.send(rqst.SerializeToString())
         print 'processed SERVER_PUBKEY rqst'
 
+    def __handle_send(self, name, msg):
+        self.peer_info[name] = {'msg': msg}
+        self.server_expect['Query'].add(name)
+        rqst = ClientToServer()
+        rqst.type = ClientToServer.QUERY_PEER
+        rqst.name = name
+        self.server_sock.send(b64encode_aes_ctr(rqst.SerializeToString(), self.dh_shared))
+
+    def __handle_list(self):
+        self.server_expect['List'] = True
+        rqst = ClientToServer()
+        rqst.type = ClientToServer.LIST
+        self.server_sock.send(b64encode_aes_ctr(rqst.SerializeToString(), self.dh_shared))
+
+    def __handle_logout(self):
+        self.server_expect['Logout'] = True
+        rqst = ClientToServer()
+        rqst.type = ClientToServer.LOGOUT
+        self.server_sock.send(b64encode_aes_ctr(rqst.SerializeToString(), self.dh_shared))
+
     def run(self):
         while 1:
             data = self.server_sock.recv(BUFFER_SIZE)
@@ -304,32 +343,27 @@ class Client:
                 break
             else:
                 print 'unsupported type: ' + rply.type
-        # self.sock.close()
+        self.login = True
         server_handler = threading.Thread(target=self.__handle_server_sock)
         server_handler.start()
         peer_handler = threading.Thread(target=self.__handle_peer_sock)
         peer_handler.start()
 
-        user_cmd = raw_input('+>')
-        parts = user_cmd.split()
-        cmd = parts[0]
-        name = parts[1]
-        msg = parts[2]
-
-        if name not in self.peer_info:
-            self.peer_info[name] = {'expect': ServerToClient.REPLY_QUERY, 'msg': msg}
-            rqst = ClientToServer()
-            rqst.type = ClientToServer.QUERY_PEER
-            rqst.name = name
-            iv = os.urandom(16)
-            cipher_query = utils.aes_ctr_encrypt(rqst.SerializeToString(), self.dh_shared, iv)
-            self.server_sock.send(base64.b64encode(iv + cipher_query))
-        elif 'ip' in self.peer_info[name] and 'pub' in self.peer_info[name]:
-            self.peer_info[name]['msg'] = msg
-            self.__initiate_auth(name)
-        else:
-            print 'retrieving peer info, waiting....'
-
+        while self.login:
+            user_cmd = raw_input()
+            parts = user_cmd.split()
+            if len(parts) == 0:
+                continue
+            elif parts[0] == 'list':
+                self.__handle_list()
+            elif parts[0] == 'logout':
+                self.__handle_logout()
+            elif parts[0] == 'send':
+                name = parts[1]
+                msg = parts[2]
+                self.__handle_send(name, msg)
+            else:
+                print 'wrong cmd!'
 
 if __name__ == '__main__':
     user_name = raw_input('user name: ')

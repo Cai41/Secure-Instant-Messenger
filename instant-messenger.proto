@@ -8,7 +8,8 @@ message ServerToClient
 		DOS_SALT = 0;
 	    SERVER_PUBKEY = 1;
 	    REPLY_QUERY = 2;
-	    INVALID = 3;
+	    REPLY_LIST = 3;
+	    LOGOUT = 4;
 	}
 
 	Type type = 1; // Type of this specific message
@@ -20,6 +21,7 @@ message ServerToClient
     string ip = 6;
     string port = 7;
     string name = 8;
+    repeated string name_list = 9;
 }
 
 message ClientToServer
@@ -30,6 +32,8 @@ message ClientToServer
 		USER_PUBKEY = 1;
 	    USER_SIGN = 2;
 	    QUERY_PEER = 3;
+	    LIST = 4;
+	    LOGOUT = 5;
 	}
 
 	Type type = 1; // Type of this specific message

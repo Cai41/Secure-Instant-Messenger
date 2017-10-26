@@ -100,6 +100,15 @@ def encrypt_private_key(filename, password, salt):
             raise e
 
 
+def b64encode_aes_ctr(content, key):
+    return base64.b64encode(aes_ctr_random_iv(content, key))
+
+
+def aes_ctr_random_iv(content, key):
+    iv = os.urandom(16)
+    return iv + aes_ctr_encrypt(content, key, iv)
+
+
 def aes_ctr_encrypt(content, key, iv):
     cipher = Cipher(algorithms.AES(key),
                     modes.CTR(iv),

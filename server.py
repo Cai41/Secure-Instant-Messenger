@@ -1,22 +1,16 @@
 #!/usr/bin/env python
-#
-# A very basic program demonstrating protobuf with sockets
-# Note that it does not catch any exceptions and of course
-# it is very insecure as executes remote commands :)
-#
-# This is the server side
 
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.backends import default_backend
 import socket
 import select
 import threading
 import os
-from instant_messenger_pb2 import *  # import the module created by protobuf for creating messages
 import utils
 import base64
+from utils import b64encode_aes_ctr
+from instant_messenger_pb2 import *  # import the module created by protobuf for creating messages
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import ec, padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 
@@ -85,24 +79,17 @@ class Server:
             self.client_conn[conn]['dh_shared_key'] = digest.finalize()
             self.client_conn[conn]['challenge'] = os.urandom(16)
 
-            iv1 = os.urandom(16)
             name = self.client_conn[conn]['name']
             w1 = self.client_credentials[name]['w1']
             server_dh_public_serialized = server_dh_private_key\
                 .public_key()\
                 .public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
-            cipher = Cipher(algorithms.AES(w1), modes.CTR(iv1), backend=default_backend())
-            encryptor = cipher.encryptor()
-            cipher_public = encryptor.update(server_dh_public_serialized) + encryptor.finalize()
-
-            iv2 = os.urandom(16)
-            cipher_private = utils.aes_ctr_encrypt(self.client_credentials[name]['pri'],
-                                                   self.client_conn[conn]['dh_shared_key'], iv2)
 
             rply.type = ServerToClient.SERVER_PUBKEY
-            rply.public_key = base64.b64encode(iv1 + cipher_public)
+            rply.public_key = b64encode_aes_ctr(server_dh_public_serialized, w1)
             rply.challenge = base64.b64encode(self.client_conn[conn]['challenge'])
-            rply.private_key = base64.b64encode(iv2 + cipher_private)
+            rply.private_key = b64encode_aes_ctr(self.client_credentials[name]['pri'],
+                                                 self.client_conn[conn]['dh_shared_key'])
             conn.send(rply.SerializeToString())
             print '__handle_user_dh_pubkey, successful send dh public key: ', self.client_conn[conn]['name']
 
@@ -130,6 +117,7 @@ class Server:
         rqst = ClientToServer()
         rply = ServerToClient()
         expect_type = self.client_conn[conn]['expect']
+        # if it is a authentication protocol msg
         if expect_type is not None:
             rqst.ParseFromString(data)
             if expect_type == rqst.type:
@@ -144,9 +132,12 @@ class Server:
             iv, cipher_query = cipher_content[:16], cipher_content[16:]
             content = utils.aes_ctr_decrypt(cipher_query, self.client_conn[conn]['dh_shared_key'], iv)
             rqst.ParseFromString(content)
-            if rqst.type != ClientToServer.QUERY_PEER:
-                print 'wrong type', rqst.type
-            self.__handle_query_peer(rqst, rply, conn)
+            if rqst.type == ClientToServer.QUERY_PEER:
+                self.__handle_query_peer(rqst, rply, conn)
+            elif rqst.type == ClientToServer.LIST:
+                self.__handle_list(rqst, rply, conn)
+            elif rqst.type == ClientToServer.LOGOUT:
+                self.__handle_logout(rqst, rply, conn)
 
     def __handle_query_peer(self, rqst, rply, conn):
         name = rqst.name
@@ -161,17 +152,25 @@ class Server:
 
             rply.public_key = base64.b64encode(public_key_bytes)
             rply.type = ServerToClient.REPLY_QUERY
-
-            iv = os.urandom(16)
-            cipher_content = utils.aes_ctr_encrypt(rply.SerializeToString(),
-                                                   self.client_conn[conn]['dh_shared_key'], iv)
-
-            conn.send(base64.b64encode(iv + cipher_content))
+            conn.send(b64encode_aes_ctr(rply.SerializeToString(), self.client_conn[conn]['dh_shared_key']))
             print 'send pubkey of', name
 
+    def __handle_list(self, rqst, rply, conn):
+        print 'list rqst'
+        rply.type = ServerToClient.REPLY_LIST
+        rply.name = self.client_conn[conn]['name']
+        for key in self.client_address:
+            rply.name_list.append(key)
+        conn.send(b64encode_aes_ctr(rply.SerializeToString(), self.client_conn[conn]['dh_shared_key']))
+
+    def __handle_logout(self, rqst, rply, conn):
+        self.client_address.pop(self.client_conn[conn]['name'])  # so that subsequent 'list' will not show this user
+        rply.type = ServerToClient.LOGOUT
+        conn.send(b64encode_aes_ctr(rply.SerializeToString(), self.client_conn[conn]['dh_shared_key']))
+
     def run(self):
-        while 1:  # process one request at a time
-            readable, _, _ = select.select(self.inputs, [], [], 2)
+        while 1:
+            readable, _, _ = select.select(self.inputs, [], [])
             for s in readable:
                 if s is self.sock:
                     conn, address = self.sock.accept()  # accept connection from client
@@ -180,18 +179,15 @@ class Server:
                     input_handler.start()
                 else:
                     print 'receive new data....'
-                    try:
-                        data = s.recv(BUFFER_SIZE)
-                    except Exception as e:
-                        s.close()
-                        self.inputs.remove(s)
-                        print 'rcv error: ', e
-                        continue
+                    data = s.recv(BUFFER_SIZE)
                     if len(data) == 0:
-                        print 'reciev new3'
-                        conn.close()
-                        self.inputs.remove(s)
-                        print 'closing socket'
+                        if self.client_conn[s]['name'] in self.client_address:
+                            print 'This should not happen, might be attack!'
+                        else:
+                            self.client_conn.pop(s)
+                            self.inputs.remove(s)
+                            s.close()
+                            print 'closing socket...'
                     else:
                         print 'processing current client rqst'
                         input_handler = threading.Thread(target=self.__handle_current_client, args=(s, data))
