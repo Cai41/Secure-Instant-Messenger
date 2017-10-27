@@ -38,6 +38,7 @@ def load_public(filename):
             raise e
 
 
+# load public key from string
 def deserialize_public_key(content):
     try:
         # if it is a .pem type file, we call load_pem_private_key()
@@ -66,6 +67,7 @@ def load_private(filename):
             raise e
 
 
+# load private key from string
 def deserialize_private_key(content):
     try:
         # if it is a .pem type file, we call load_pem_private_key()
@@ -90,11 +92,7 @@ def encrypt_private_key(filename, password, salt):
         try:
             content = key_file.read()
             key = password_to_w(salt, password, w2_iteration, w2_length)
-            iv = os.urandom(16)
-            cipher = Cipher(algorithms.AES(key), modes.CTR(iv), backend=default_backend())
-            encryptor = cipher.encryptor()
-            cipher_text = encryptor.update(content) + encryptor.finalize()
-            return salt + iv + cipher_text
+            return salt + aes_cgm_random_iv(content, key)
         except (IOError, ValueError, TypeError, UnsupportedAlgorithm) as e:
             print 'fail reading key file', e
             raise e
@@ -123,6 +121,36 @@ def aes_ctr_decrypt(cipher_content, key, iv):
                     backend=default_backend())
     decryptor = cipher.decryptor()
     return decryptor.update(cipher_content) + decryptor.finalize()
+
+
+def aes_cgm_encrypt(content, key, iv):
+    cipher = Cipher(algorithms.AES(key),
+                    modes.GCM(iv),
+                    backend=default_backend())
+    encryptor = cipher.encryptor()
+    cipher_text = encryptor.update(content) + encryptor.finalize()
+    tag = encryptor.tag
+    return tag + cipher_text
+
+
+def aes_cgm_random_iv(content, key):
+    iv = os.urandom(16)
+    return iv + aes_cgm_encrypt(content, key, iv)
+
+
+def b64encode_aes_cgm_encrypt(content, key):
+    return base64.b64encode(aes_cgm_random_iv(content, key))
+
+
+def aes_cgm_decrypt(cipher_text, key, iv, tag):
+    decryptor = Cipher(algorithms.AES(key), modes.GCM(iv, tag), backend=default_backend()).decryptor()
+    return decryptor.update(cipher_text) + decryptor.finalize()
+
+
+def b64decode_aes_cgm_decrypt(content, key):
+    decoded_data = base64.b64decode(content)
+    iv, tag, data = decoded_data[:16], decoded_data[16:32], decoded_data[32:]
+    return aes_cgm_decrypt(data, key, iv, tag)
 
 
 def decrypt_private_key(cipher_file, password):
