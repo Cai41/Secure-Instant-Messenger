@@ -9,6 +9,7 @@ message ServerToClient {
 		REPLY_QUERY = 2;
 		REPLY_LIST = 3;
 		LOGOUT = 4;
+	    ERROR = 5;
 	}
 
 	Type type = 1; // Type of this specific message
@@ -21,6 +22,7 @@ message ServerToClient {
 	string port = 7;
 	string name = 8;
 	repeated string name_list = 9;
+    string info = 10;
 }
 
 message ClientToServer {

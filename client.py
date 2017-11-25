@@ -14,9 +14,8 @@ from cryptography.hazmat.primitives.asymmetric import ec, padding
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-
 IP_ADDR = '127.0.0.1'  # use loopback interface
-TCP_PORT = 5055  # TCP port of server
+TCP_PORT = 50550  # TCP port of server
 BUFFER_SIZE = 10240
 
 logging.basicConfig(level=logging.DEBUG)
@@ -123,6 +122,8 @@ class Client:
                                          ClientToClient.RECVER_IDENTITY, conn)
                     logger.debug('receive pub key as receiver to' + rply.name)
                     logger.debug('and send identity')
+            if rply.type == ServerToClient.ERROR:
+                print 'error information: from server: ' + rply.info
 
     """""
     The sender sends g^a mod p, we record this msg, compute shared key and reply with our own DH key
@@ -133,10 +134,7 @@ class Client:
         # generate our own DH key
         rcver_dh_private_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
         # compute shared key
-        dh_shared = rcver_dh_private_key.exchange(ec.ECDH(), sender_dh_pub_key)
-        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
-        digest.update(dh_shared)
-        shared_key = digest.finalize()
+        shared_key = utils.generate_dh_key(rcver_dh_private_key, sender_dh_pub_key)
         # cached sender_dh_pub_key_bytes
         # since we will have to verify signature of public key in the future protocol msg
         self.conn_info[s] = {'shared_dh': shared_key, 'expect': ClientToClient.SENDER_IDENTITY,
@@ -153,11 +151,7 @@ class Client:
         rcver_dh_pub_bytes = base64.b64decode(rqst.public_key)
         recver_pub = utils.deserialize_public_key(rcver_dh_pub_bytes)
         # generate our own DH key
-        dh_shared = self.conn_info[s]['sender_dh_private'].exchange(ec.ECDH(), recver_pub)
-        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
-        digest.update(dh_shared)
-
-        self.conn_info[s]['shared_dh'] = digest.finalize()
+        self.conn_info[s]['shared_dh'] = utils.generate_dh_key(self.conn_info[s]['sender_dh_private'], recver_pub)
         self.conn_info[s]['expect'] = ClientToClient.RECVER_IDENTITY
         # cached sender_dh_pub_key_bytes
         # since we will have to verify signature of public key in the future protocol msg
@@ -307,10 +301,10 @@ class Client:
         rqst.challenge = rply.challenge
         self.dh_private = ec.generate_private_key(ec.SECP384R1(), default_backend())
         rqst.public_key = base64.b64encode(self.dh_private.public_key()
-                                           .public_bytes(Encoding.DER,
-                                                         PublicFormat.SubjectPublicKeyInfo))
+                                               .public_bytes(Encoding.DER,
+                                                             PublicFormat.SubjectPublicKeyInfo))
         self.server_sock.send(rqst.SerializeToString())
-        logger.debug('processed DOS_SALT rqst')
+        logger.debug('__handle_dos_salt')
 
     """""
     During authentication, Receives W{g^b mod p}, (g^ab mod p){W'{rsa private key}} and c from server
@@ -320,10 +314,7 @@ class Client:
         decrypted_key_bytes = utils.b64decode_aes_cgm_decrypt(rply.public_key, self.w1)
         server_dh_public = utils.deserialize_public_key(decrypted_key_bytes)
         # compute shared key
-        shared_key = self.dh_private.exchange(ec.ECDH(), server_dh_public)
-        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
-        digest.update(shared_key)
-        self.dh_shared = digest.finalize()
+        self.dh_shared = utils.generate_dh_key(self.dh_private, server_dh_public)
 
         # So we can compute y = W'{rsa private key} now
         y = utils.b64decode_aes_cgm_decrypt(rply.private_key, self.dh_shared)
@@ -385,18 +376,28 @@ class Client:
         self.server_sock.send(utils.b64encode_aes_cgm_encrypt(rqst.SerializeToString(), self.dh_shared))
 
     def run(self):
-        while 1:
-            data = self.server_sock.recv(BUFFER_SIZE)
-            rply = ServerToClient()
-            rply.ParseFromString(data)
-            rqst = ClientToServer()
-            if rply.type == ServerToClient.DOS_SALT:
-                self.__handle_dos_salt(rqst, rply)
-            elif rply.type == ServerToClient.SERVER_PUBKEY:
-                self.__handle_server_dhpub(rqst, rply)
-                break
-            else:
-                print 'unsupported type: ' + rply.type
+        try:
+            while 1:
+                data = self.server_sock.recv(BUFFER_SIZE)
+                logger.debug('Receive auth msg')
+                rply = ServerToClient()
+                rply.ParseFromString(data)
+                rqst = ClientToServer()
+                if rply.type == ServerToClient.DOS_SALT:
+                    self.__handle_dos_salt(rqst, rply)
+                elif rply.type == ServerToClient.SERVER_PUBKEY:
+                    self.__handle_server_dhpub(rqst, rply)
+                    break
+                elif rply.type == ServerToClient.ERROR:
+                    print 'Error information from server: ' + rply.info
+                    self.server_sock.close()
+                    return
+                else:
+                    print 'Unsupported type: ' + rply.type
+        except Exception as e:
+            print 'Fail to authenticate. ', e
+            self.server_sock.close()
+            return
         self.login = True
         server_handler = threading.Thread(target=self.__handle_server_sock)
         server_handler.start()

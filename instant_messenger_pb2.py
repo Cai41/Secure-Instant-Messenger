@@ -19,7 +19,7 @@ DESCRIPTOR = _descriptor.FileDescriptor(
   name='instant-messenger.proto',
   package='',
   syntax='proto3',
-  serialized_pb=_b('\n\x17instant-messenger.proto\"\x8f\x02\n\x0eServerToClient\x12\"\n\x04type\x18\x01 \x01(\x0e\x32\x14.ServerToClient.Type\x12\x11\n\tchallenge\x18\x02 \x01(\t\x12\x0c\n\x04salt\x18\x03 \x01(\t\x12\x12\n\npublic_key\x18\x04 \x01(\t\x12\x13\n\x0bprivate_key\x18\x05 \x01(\t\x12\n\n\x02ip\x18\x06 \x01(\t\x12\x0c\n\x04port\x18\x07 \x01(\t\x12\x0c\n\x04name\x18\x08 \x01(\t\x12\x11\n\tname_list\x18\t \x03(\t\"T\n\x04Type\x12\x0c\n\x08\x44OS_SALT\x10\x00\x12\x11\n\rSERVER_PUBKEY\x10\x01\x12\x0f\n\x0bREPLY_QUERY\x10\x02\x12\x0e\n\nREPLY_LIST\x10\x03\x12\n\n\x06LOGOUT\x10\x04\"\xfc\x01\n\x0e\x43lientToServer\x12\"\n\x04type\x18\x01 \x01(\x0e\x32\x14.ClientToServer.Type\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x11\n\tchallenge\x18\x03 \x01(\t\x12\x12\n\npublic_key\x18\x04 \x01(\t\x12\x0c\n\x04hash\x18\x05 \x01(\t\x12\x0c\n\x04sign\x18\x06 \x01(\t\x12\n\n\x02ip\x18\x07 \x01(\t\x12\x0c\n\x04port\x18\x08 \x01(\t\"[\n\x04Type\x12\r\n\tINITIATOR\x10\x00\x12\x0f\n\x0bUSER_PUBKEY\x10\x01\x12\r\n\tUSER_SIGN\x10\x02\x12\x0e\n\nQUERY_PEER\x10\x03\x12\x08\n\x04LIST\x10\x04\x12\n\n\x06LOGOUT\x10\x05\"\xd0\x01\n\x0e\x43lientToClient\x12\"\n\x04type\x18\x01 \x01(\x0e\x32\x14.ClientToClient.Type\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x12\n\npublic_key\x18\x03 \x01(\t\x12\x0c\n\x04sign\x18\x04 \x01(\t\x12\x0b\n\x03msg\x18\x05 \x01(\t\"]\n\x04Type\x12\x0e\n\nSENDER_PUB\x10\x00\x12\x0e\n\nRECVER_PUB\x10\x01\x12\x13\n\x0fSENDER_IDENTITY\x10\x02\x12\x13\n\x0fRECVER_IDENTITY\x10\x03\x12\x0b\n\x07MESSAGE\x10\x04\x62\x06proto3')
+  serialized_pb=_b('\n\x17instant-messenger.proto\"\xa8\x02\n\x0eServerToClient\x12\"\n\x04type\x18\x01 \x01(\x0e\x32\x14.ServerToClient.Type\x12\x11\n\tchallenge\x18\x02 \x01(\t\x12\x0c\n\x04salt\x18\x03 \x01(\t\x12\x12\n\npublic_key\x18\x04 \x01(\t\x12\x13\n\x0bprivate_key\x18\x05 \x01(\t\x12\n\n\x02ip\x18\x06 \x01(\t\x12\x0c\n\x04port\x18\x07 \x01(\t\x12\x0c\n\x04name\x18\x08 \x01(\t\x12\x11\n\tname_list\x18\t \x03(\t\x12\x0c\n\x04info\x18\n \x01(\t\"_\n\x04Type\x12\x0c\n\x08\x44OS_SALT\x10\x00\x12\x11\n\rSERVER_PUBKEY\x10\x01\x12\x0f\n\x0bREPLY_QUERY\x10\x02\x12\x0e\n\nREPLY_LIST\x10\x03\x12\n\n\x06LOGOUT\x10\x04\x12\t\n\x05\x45RROR\x10\x05\"\xfc\x01\n\x0e\x43lientToServer\x12\"\n\x04type\x18\x01 \x01(\x0e\x32\x14.ClientToServer.Type\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x11\n\tchallenge\x18\x03 \x01(\t\x12\x12\n\npublic_key\x18\x04 \x01(\t\x12\x0c\n\x04hash\x18\x05 \x01(\t\x12\x0c\n\x04sign\x18\x06 \x01(\t\x12\n\n\x02ip\x18\x07 \x01(\t\x12\x0c\n\x04port\x18\x08 \x01(\t\"[\n\x04Type\x12\r\n\tINITIATOR\x10\x00\x12\x0f\n\x0bUSER_PUBKEY\x10\x01\x12\r\n\tUSER_SIGN\x10\x02\x12\x0e\n\nQUERY_PEER\x10\x03\x12\x08\n\x04LIST\x10\x04\x12\n\n\x06LOGOUT\x10\x05\"\xd0\x01\n\x0e\x43lientToClient\x12\"\n\x04type\x18\x01 \x01(\x0e\x32\x14.ClientToClient.Type\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x12\n\npublic_key\x18\x03 \x01(\t\x12\x0c\n\x04sign\x18\x04 \x01(\t\x12\x0b\n\x03msg\x18\x05 \x01(\t\"]\n\x04Type\x12\x0e\n\nSENDER_PUB\x10\x00\x12\x0e\n\nRECVER_PUB\x10\x01\x12\x13\n\x0fSENDER_IDENTITY\x10\x02\x12\x13\n\x0fRECVER_IDENTITY\x10\x03\x12\x0b\n\x07MESSAGE\x10\x04\x62\x06proto3')
 )
 
 
@@ -50,11 +50,15 @@ _SERVERTOCLIENT_TYPE = _descriptor.EnumDescriptor(
       name='LOGOUT', index=4, number=4,
       options=None,
       type=None),
+    _descriptor.EnumValueDescriptor(
+      name='ERROR', index=5, number=5,
+      options=None,
+      type=None),
   ],
   containing_type=None,
   options=None,
-  serialized_start=215,
-  serialized_end=299,
+  serialized_start=229,
+  serialized_end=324,
 )
 _sym_db.RegisterEnumDescriptor(_SERVERTOCLIENT_TYPE)
 
@@ -91,8 +95,8 @@ _CLIENTTOSERVER_TYPE = _descriptor.EnumDescriptor(
   ],
   containing_type=None,
   options=None,
-  serialized_start=463,
-  serialized_end=554,
+  serialized_start=488,
+  serialized_end=579,
 )
 _sym_db.RegisterEnumDescriptor(_CLIENTTOSERVER_TYPE)
 
@@ -125,8 +129,8 @@ _CLIENTTOCLIENT_TYPE = _descriptor.EnumDescriptor(
   ],
   containing_type=None,
   options=None,
-  serialized_start=672,
-  serialized_end=765,
+  serialized_start=697,
+  serialized_end=790,
 )
 _sym_db.RegisterEnumDescriptor(_CLIENTTOCLIENT_TYPE)
 
@@ -201,6 +205,13 @@ _SERVERTOCLIENT = _descriptor.Descriptor(
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
       options=None),
+    _descriptor.FieldDescriptor(
+      name='info', full_name='ServerToClient.info', index=9,
+      number=10, type=9, cpp_type=9, label=1,
+      has_default_value=False, default_value=_b("").decode('utf-8'),
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      options=None),
   ],
   extensions=[
   ],
@@ -215,7 +226,7 @@ _SERVERTOCLIENT = _descriptor.Descriptor(
   oneofs=[
   ],
   serialized_start=28,
-  serialized_end=299,
+  serialized_end=324,
 )
 
 
@@ -295,8 +306,8 @@ _CLIENTTOSERVER = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=302,
-  serialized_end=554,
+  serialized_start=327,
+  serialized_end=579,
 )
 
 
@@ -355,8 +366,8 @@ _CLIENTTOCLIENT = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=557,
-  serialized_end=765,
+  serialized_start=582,
+  serialized_end=790,
 )
 
 _SERVERTOCLIENT.fields_by_name['type'].enum_type = _SERVERTOCLIENT_TYPE

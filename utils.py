@@ -3,7 +3,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric import ec, padding
 import os
 import base64
 
@@ -16,6 +16,15 @@ w2_length = 16
 w2_iteration = 2048
 
 
+# generate dh key
+def generate_dh_key(private_key, public_key):
+    shared_key = private_key.exchange(ec.ECDH(), public_key)
+    digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+    digest.update(shared_key)
+    return digest.finalize()
+
+
+# convert password to crypto key
 def password_to_w(salt, password, iteration, key_size):
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
@@ -123,6 +132,7 @@ def aes_ctr_decrypt(cipher_content, key, iv):
     return decryptor.update(cipher_content) + decryptor.finalize()
 
 
+# use AES_CGM to encrypt, given iv
 def aes_cgm_encrypt(content, key, iv):
     cipher = Cipher(algorithms.AES(key),
                     modes.GCM(iv),
@@ -133,20 +143,24 @@ def aes_cgm_encrypt(content, key, iv):
     return tag + cipher_text
 
 
+# use AES_CGM to encrypt, randomized iv
 def aes_cgm_random_iv(content, key):
     iv = os.urandom(16)
     return iv + aes_cgm_encrypt(content, key, iv)
 
 
+# use AES_CGM to encrypt, randomized iv, and encode the result by base64
 def b64encode_aes_cgm_encrypt(content, key):
     return base64.b64encode(aes_cgm_random_iv(content, key))
 
 
+# use AES_GCM to decrypt, given iv
 def aes_cgm_decrypt(cipher_text, key, iv, tag):
     decryptor = Cipher(algorithms.AES(key), modes.GCM(iv, tag), backend=default_backend()).decryptor()
     return decryptor.update(cipher_text) + decryptor.finalize()
 
 
+# use base64 to decode, then use AES_GCM to decrypt
 def b64decode_aes_cgm_decrypt(content, key):
     decoded_data = base64.b64decode(content)
     iv, tag, data = decoded_data[:16], decoded_data[16:32], decoded_data[32:]
