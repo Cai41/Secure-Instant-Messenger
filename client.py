@@ -21,8 +21,6 @@ logger = logging.getLogger(__name__)
 
 class Client:
     def __init__(self, name, password):
-
-
         self.prog = re.compile('\s*(\S+)\s+(\S+)\s(.*)')
         self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_sock.connect((IP_ADDR, TCP_PORT))  # connect to server
