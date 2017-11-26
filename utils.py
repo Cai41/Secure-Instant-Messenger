@@ -35,6 +35,14 @@ def password_to_w(salt, password, iteration, key_size):
     )
     return kdf.derive(password)
 
+# Serialize public key
+def serialize_public_key(filename):
+    public_key=load_public(filename)
+    pem = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    return pem
 
 # load public key from key file
 def load_public(filename):
@@ -45,6 +53,7 @@ def load_public(filename):
         except (IOError, ValueError, TypeError, UnsupportedAlgorithm) as e:
             print 'fail reading key file', e
             raise e
+
 
 
 # load public key from string
@@ -180,19 +189,25 @@ def decrypt_private_key(cipher_file, password):
     return private_key
 
 
-def add_entry(username, password, private_file, database):
+
+
+def add_entry(username, password, private_file, public_file ,database):
     salt1, salt2 = os.urandom(16), os.urandom(16)
     w1 = salt1 + password_to_w(salt1, password, w1_iteration, w1_length)
     y = encrypt_private_key(private_file, password, salt2)
+    public_key=serialize_public_key(public_file)
     with open(database, 'a') as datafile:
-        datafile.write(username + '\t' + base64.b64encode(w1) + '\t' + base64.b64encode(y) + '\n')
+        datafile.write(username + '\t' + base64.b64encode(w1) + '\t' + base64.b64encode(y) + '\t'+base64.b64encode(public_key)+'\n')
 
-
+# Registering user and saving data
 def add_batch(clear_password, database):
     with open(clear_password, 'r') as pwdfile:
         for line in pwdfile:
             parts = line.split(":")
-            add_entry(parts[0], parts[1].strip(), parts[0] + '_private.der', database)
+            add_entry(parts[0], parts[1].strip(), parts[0] + '_private.der', parts[0] + '_public.der',database)
+
+# if __name__ == '__main__':
+#     add_batch('clear_password','database')
 
 
 def test_read_entry(clear_password, database):
@@ -217,27 +232,3 @@ def test_read_entry(clear_password, database):
             )
             kdf.verify(pwd_map[parts[0]], w1[16:])
 
-
-def test_encrypt_private_key():
-    salt = os.urandom(16)
-    password = 'asd123'
-    private_key = decrypt_private_key(encrypt_private_key('Alice_private.der', password, salt), password)
-    public_key = load_public('Alice_public.der')
-    message = b"encrypted data"
-    ciphertext = public_key.encrypt(
-        message,
-        padding.OAEP(
-            mgf=padding.MGF1(algorithm=hashes.SHA1()),
-            algorithm=hashes.SHA1(),
-            label=None
-        )
-    )
-    plaintext = private_key.decrypt(
-        ciphertext,
-        padding.OAEP(
-            mgf=padding.MGF1(algorithm=hashes.SHA1()),
-            algorithm=hashes.SHA1(),
-            label=None
-        )
-    )
-    return plaintext == message
