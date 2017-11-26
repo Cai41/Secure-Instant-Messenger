@@ -6,7 +6,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.asymmetric import ec, padding
 import os
 import base64
-
+import json
 
 # The .pem key file will always start with this prefix string
 PEM_START = '-----BEGIN'
@@ -232,3 +232,9 @@ def test_read_entry(clear_password, database):
             )
             kdf.verify(pwd_map[parts[0]], w1[16:])
 
+def load_serverInfo(filename):
+    data = json.load(open(filename))
+    IP_ADDR=data['IP_ADDR']
+    TCP_PORT=data['TCP_PORT']
+    BUFFER_SIZE=data['BUFFER_SIZE']
+    return [IP_ADDR,TCP_PORT,BUFFER_SIZE]
