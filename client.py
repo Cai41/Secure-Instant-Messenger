@@ -14,13 +14,10 @@ from cryptography.hazmat.primitives.asymmetric import ec, padding
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-IP_ADDR = '127.0.0.1'  # use loopback interface
-TCP_PORT = 50550  # TCP port of server
-BUFFER_SIZE = 10240
+IP_ADDR,TCP_PORT,BUFFER_SIZE=utils.load_serverInfo('ServerInfo.json')
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
-
 
 class Client:
     def __init__(self, name, password):

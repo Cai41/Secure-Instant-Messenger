@@ -43,7 +43,7 @@ class Server:
                 w1 = base64.b64decode(parts[1])
                 self.client_credentials[name]['w1_salt'] = w1[:16]
                 self.client_credentials[name]['w1'] = w1[16:]
-                self.client_credentials[name]['pub'] = utils.load_public(name + '_public.der')
+                self.client_credentials[name]['pub'] = utils.deserialize_public_key(base64.b64decode(parts[3]))
                 self.client_credentials[name]['pri'] = base64.b64decode(parts[2])
 
     """""

@@ -4,9 +4,10 @@ from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.asymmetric import ec, padding
+from cryptography.hazmat.primitives.asymmetric import rsa
 import os
 import base64
-
+import json
 
 # The .pem key file will always start with this prefix string
 PEM_START = '-----BEGIN'
@@ -35,6 +36,13 @@ def password_to_w(salt, password, iteration, key_size):
     )
     return kdf.derive(password)
 
+# Serialize public key
+def serialize_public_key(public_key):
+    pem = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    return pem
 
 # load public key from key file
 def load_public(filename):
@@ -45,6 +53,7 @@ def load_public(filename):
         except (IOError, ValueError, TypeError, UnsupportedAlgorithm) as e:
             print 'fail reading key file', e
             raise e
+
 
 
 # load public key from string
@@ -96,15 +105,15 @@ def deserialize_private_key(content):
         raise e
 
 
-def encrypt_private_key(filename, password, salt):
-    with open(filename, "rb") as key_file:
-        try:
-            content = key_file.read()
-            key = password_to_w(salt, password, w2_iteration, w2_length)
-            return salt + aes_cgm_random_iv(content, key)
-        except (IOError, ValueError, TypeError, UnsupportedAlgorithm) as e:
-            print 'fail reading key file', e
-            raise e
+def encrypt_private_key(private_key, password, salt):
+        key = password_to_w(salt, password, w2_iteration, w2_length)
+        # Only serialized key can be encrypted
+        pem = private_key.private_bytes(
+            encoding = serialization.Encoding.PEM,
+            format = serialization.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm = serialization.NoEncryption()
+        )
+        return salt + aes_cgm_random_iv(pem, key)
 
 
 def b64encode_aes_ctr(content, key):
@@ -180,19 +189,33 @@ def decrypt_private_key(cipher_file, password):
     return private_key
 
 
-def add_entry(username, password, private_file, database):
+def generateRSAkeys():
+    private_key = rsa.generate_private_key(
+        public_exponent = 65537,
+        key_size = 2048,
+        backend = default_backend()
+        )
+    public_key = private_key.public_key()
+    return [public_key,private_key]
+
+def add_entry(username, password, database):
+    public_key,private_key=generateRSAkeys()
     salt1, salt2 = os.urandom(16), os.urandom(16)
     w1 = salt1 + password_to_w(salt1, password, w1_iteration, w1_length)
-    y = encrypt_private_key(private_file, password, salt2)
+    y = encrypt_private_key(private_key, password, salt2)
+    public_key=serialize_public_key(public_key)
     with open(database, 'a') as datafile:
-        datafile.write(username + '\t' + base64.b64encode(w1) + '\t' + base64.b64encode(y) + '\n')
+        datafile.write(username + '\t' + base64.b64encode(w1) + '\t' + base64.b64encode(y) + '\t'+base64.b64encode(public_key)+'\n')
 
-
+# Registering user and saving data
 def add_batch(clear_password, database):
     with open(clear_password, 'r') as pwdfile:
         for line in pwdfile:
             parts = line.split(":")
-            add_entry(parts[0], parts[1].strip(), parts[0] + '_private.der', database)
+            add_entry(parts[0], parts[1].strip(),database)
+
+if __name__ == '__main__':
+    add_batch('clear_password','database')
 
 
 def test_read_entry(clear_password, database):
@@ -217,27 +240,9 @@ def test_read_entry(clear_password, database):
             )
             kdf.verify(pwd_map[parts[0]], w1[16:])
 
-
-def test_encrypt_private_key():
-    salt = os.urandom(16)
-    password = 'asd123'
-    private_key = decrypt_private_key(encrypt_private_key('Alice_private.der', password, salt), password)
-    public_key = load_public('Alice_public.der')
-    message = b"encrypted data"
-    ciphertext = public_key.encrypt(
-        message,
-        padding.OAEP(
-            mgf=padding.MGF1(algorithm=hashes.SHA1()),
-            algorithm=hashes.SHA1(),
-            label=None
-        )
-    )
-    plaintext = private_key.decrypt(
-        ciphertext,
-        padding.OAEP(
-            mgf=padding.MGF1(algorithm=hashes.SHA1()),
-            algorithm=hashes.SHA1(),
-            label=None
-        )
-    )
-    return plaintext == message
+def load_serverInfo(filename):
+    data = json.load(open(filename))
+    IP_ADDR=data['IP_ADDR']
+    TCP_PORT=data['TCP_PORT']
+    BUFFER_SIZE=data['BUFFER_SIZE']
+    return [IP_ADDR,TCP_PORT,BUFFER_SIZE]
