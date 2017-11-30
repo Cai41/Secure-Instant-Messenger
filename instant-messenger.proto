@@ -23,6 +23,7 @@ message ServerToClient {
 	string name = 8;
 	repeated string name_list = 9;
     string info = 10;
+    int32 time = 11;
 }
 
 message ClientToServer {
@@ -45,6 +46,7 @@ message ClientToServer {
 	string sign = 6;
 	string ip = 7;
 	string port = 8;
+    int32 time = 9;
 }
 
 message ClientToClient {
@@ -63,4 +65,5 @@ message ClientToClient {
 	string public_key = 3;
 	string sign = 4;
 	string msg = 5;
+    int32 time = 6;
 }

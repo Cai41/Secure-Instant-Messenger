@@ -7,7 +7,9 @@ import random
 import threading
 import utils
 import re
+import time
 import logging
+from utils import b64decode_aes_cgm_decrypt
 from instant_messenger_pb2 import *   # import the module created by protobuf for creating messages
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, padding
@@ -15,15 +17,15 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 IP_ADDR,TCP_PORT,BUFFER_SIZE=utils.load_serverInfo('ServerInfo.json')
+TIME_TOLERANCE = 15
 
 logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('Client')
 
 class Client:
     def __init__(self, name, password):
         self.prog = re.compile('\s*(\S+)\s+(\S+)\s(.*)')
         self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server_sock.connect((IP_ADDR, TCP_PORT))  # connect to server
 
         self.listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.listen_port = random.randrange(50000, 65535)
@@ -39,10 +41,6 @@ class Client:
         # Then any list msg from server should be ignored, might replay attack or impersonate
         self.server_expect = {'List': False, 'Query': set(), 'Logout': False}
 
-        rqst = ClientToServer()
-        rqst.type = ClientToServer.INITIATOR
-        rqst.name = name
-        self.server_sock.send(rqst.SerializeToString())
         self.dh_private = None
         self.dh_shared = None
         self.w1_salt = None
@@ -67,16 +65,27 @@ class Client:
                                        'sender_dh_private': ec.generate_private_key(ec.SECP384R1(), default_backend()),
                                        'name': name}
         self.__send_dh_pub(self.conn_info[client_sock]['sender_dh_private'], ClientToClient.SENDER_PUB, client_sock)
-        logger.debug('send dh pub as sender ' + self.name)
+        logger.debug('__initiate_auth: Send dh pub as sender ' + self.name)
 
     """""
     Processing all packets from server side, this thread starts when authentication finishes
     """""
     def __handle_server_sock(self):
         while self.login:
-            data = utils.b64decode_aes_cgm_decrypt(self.server_sock.recv(BUFFER_SIZE), self.dh_shared)
+            encrypted_data = self.server_sock.recv(BUFFER_SIZE)
+            if len(encrypted_data) == 0:
+                # len(encrypted_data) == 0 means server is closing socket, so client can terminate program now
+                self.server_sock.close()
+                self.login = False
+                logger.error('__handle_server_sock: Server is shutting down')
+                return
+            data = b64decode_aes_cgm_decrypt(encrypted_data, self.dh_shared)
             rply = ServerToClient()
             rply.ParseFromString(data)
+            if abs(rply.time - time.time()) > TIME_TOLERANCE:
+                # ignore the messages that are outdated
+                logger.warn('__handle_server_sock: Message is too outdated')
+                continue
             # server is ready to logout the user, prepare to close the socket
             if rply.type == ServerToClient.LOGOUT and self.server_expect['Logout']:
                 self.login = False
@@ -99,7 +108,7 @@ class Client:
 
                 # if we are the sender, then we haven't established connection with this peer
                 if 'conn' not in self.peer_info[rply.name]:
-                    logger.debug('receive pub key as sender to' + rply.name)
+                    logger.debug('__handle_server_sock: Receive pub key as sender to' + rply.name)
                     self.__initiate_auth(rply.name)
                 else:
                     # if we are receiver, then we already establish the connection
@@ -117,10 +126,10 @@ class Client:
                     )
                     self.__send_identity(self.conn_info[conn]['rcver_dh_private'],
                                          ClientToClient.RECVER_IDENTITY, conn)
-                    logger.debug('receive pub key as receiver to' + rply.name)
-                    logger.debug('and send identity')
+                    logger.debug('__handle_server_sock: Receive pub key as receiver to' + rply.name)
+                    logger.debug('__handle_server_sock: and send identity')
             if rply.type == ServerToClient.ERROR:
-                print 'error information: from server: ' + rply.info
+                print 'Error information: from server: ' + rply.info
 
     """""
     The sender sends g^a mod p, we record this msg, compute shared key and reply with our own DH key
@@ -139,7 +148,7 @@ class Client:
                              'sender_dh_pub_bytes': sender_dh_pub_key_bytes}
         # send DH public key back
         self.__send_dh_pub(rcver_dh_private_key, ClientToClient.RECVER_PUB, s)
-        logger.debug('send dh pub as receiver ' + self.name)
+        logger.debug('__handle_sender_pub: Send dh pub as receiver ' + self.name)
 
     """""
     The receiver sends back g^b mod p
@@ -156,7 +165,7 @@ class Client:
         # According to protocol, send back (g^ab mod p){"Alice", [g^a mod p]sign}
         self.__send_identity(self.conn_info[s]['sender_dh_private'],
                              ClientToClient.SENDER_IDENTITY, s)
-        logger.debug('send identity as sender to ' + self.conn_info[s]['name'])
+        logger.debug('__handle_recver_pub: Send identity as sender to ' + self.conn_info[s]['name'])
 
     """""
     Receives sender's (g^ab mod p){"Alice", [g^a mod p]sign-A}
@@ -176,8 +185,9 @@ class Client:
         rqst1 = ClientToServer()
         rqst1.type = ClientToServer.QUERY_PEER
         rqst1.name = rqst.name
+        rqst1.time = int(time.time())
         self.server_sock.send(utils.b64encode_aes_cgm_encrypt(rqst1.SerializeToString(), self.dh_shared))
-        logger.debug('query server as receiver for peer ' + rqst1.name)
+        logger.debug('__handle_sender_identiy: Query server as receiver for peer ' + rqst1.name)
 
     """""
     Receives receiver's (g^ab mod p){"Bob", [g^a mod p]sign-B}. After we verify it's
@@ -193,10 +203,11 @@ class Client:
             ),
             hashes.SHA256()
         )
-        logger.debug('verify receiver identity')
+        logger.debug('__handle_recver_identity: Verify receiver identity')
         chat_msg = ClientToClient()
         chat_msg.type = ClientToClient.MESSAGE
         chat_msg.msg = self.peer_info[rqst.name]['msg']
+        chat_msg.time = int(time.time())
         s.send(utils.b64encode_aes_cgm_encrypt(chat_msg.SerializeToString(), self.conn_info[s]['shared_dh']))
 
     """""
@@ -204,11 +215,11 @@ class Client:
     """""
     def __handle_peer_sock(self):
         while self.login:
-            readable, _, _ = select.select(self.client_socks, [], [], 1)
+            readable, _, _ = select.select(self.client_socks, [], [], 2)
             for s in readable:
                 if s is self.listen_sock:
                     conn, address = self.listen_sock.accept()  # accept connection from another peer
-                    logger.debug('Connection address:' + str(address))
+                    logger.debug('__handle_peer_sock: Connection address:' + str(address))
                     self.client_socks.append(conn)
                     self.conn_info[conn] = {}
                 else:
@@ -223,7 +234,7 @@ class Client:
                         self.peer_info.pop(self.conn_info[s]['name'], None)
                         self.conn_info.pop(s)
                         self.client_socks.remove(s)
-                        logger.debug('delete socket on receiving empty packet')
+                        logger.debug('__handle_peer_sock: Delete socket on receiving empty packet')
                     # shared key haven't established, so it is the first two msg of authentication protocol
                     elif 'shared_dh' not in self.conn_info[s]:
                         rqst.ParseFromString(data)
@@ -232,17 +243,17 @@ class Client:
                         elif rqst.type == ClientToClient.RECVER_PUB:
                             self.__handle_recver_pub(rqst, s)
                         else:
-                            logger.debug('drop...' + rqst.type)
+                            logger.debug('__handle_peer_sock: Drop...' + rqst.type)
                     # shared key already established, so it is the last two msg of authentication protocol
                     # or the actual conversation message
                     else:
-                        content = utils.b64decode_aes_cgm_decrypt(data, self.conn_info[s]['shared_dh'])
+                        content = b64decode_aes_cgm_decrypt(data, self.conn_info[s]['shared_dh'])
                         rqst.ParseFromString(content)
                         if rqst.type == ClientToClient.SENDER_IDENTITY:
                             self.__handle_sender_identiy(rqst, s)
                         elif rqst.type == ClientToClient.RECVER_IDENTITY:
                             self.__handle_recver_identity(rqst, s)
-                        elif rqst.type == ClientToClient.MESSAGE:
+                        elif rqst.type == ClientToClient.MESSAGE and abs(rqst.time - time.time()) <= TIME_TOLERANCE:
                             # On receiving message, we can safely close the socket and forget
                             # all the shared key
                             print self.conn_info[s]['name'] + ": " + rqst.msg
@@ -251,7 +262,7 @@ class Client:
                             self.peer_info.pop(self.conn_info[s]['name'])
                             self.conn_info.pop(s)
                         else:
-                            logger.warn('drop on unknown tyoe')
+                            logger.warn('__handle_peer_sock: Drop on unknown tyoe or timestamp is outdated')
 
     """""
     Sends dh public key through socket s
@@ -261,8 +272,7 @@ class Client:
         rply.type = rply_type
         rply.public_key = base64.b64encode(dh_private_key
                                            .public_key()
-                                           .public_bytes(Encoding.DER,
-                                                         PublicFormat.SubjectPublicKeyInfo))
+                                           .public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo))
         s.send(rply.SerializeToString())
 
     """""
@@ -298,8 +308,7 @@ class Client:
         rqst.challenge = rply.challenge
         self.dh_private = ec.generate_private_key(ec.SECP384R1(), default_backend())
         rqst.public_key = base64.b64encode(self.dh_private.public_key()
-                                               .public_bytes(Encoding.DER,
-                                                             PublicFormat.SubjectPublicKeyInfo))
+                                               .public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo))
         self.server_sock.send(rqst.SerializeToString())
         logger.debug('__handle_dos_salt')
 
@@ -308,13 +317,13 @@ class Client:
     Sends back [hash(g^ab mod p, c)]sign to server to prove myself
     """""
     def __handle_server_dhpub(self, rqst, rply):
-        decrypted_key_bytes = utils.b64decode_aes_cgm_decrypt(rply.public_key, self.w1)
+        decrypted_key_bytes = b64decode_aes_cgm_decrypt(rply.public_key, self.w1)
         server_dh_public = utils.deserialize_public_key(decrypted_key_bytes)
         # compute shared key
         self.dh_shared = utils.generate_dh_key(self.dh_private, server_dh_public)
 
         # So we can compute y = W'{rsa private key} now
-        y = utils.b64decode_aes_cgm_decrypt(rply.private_key, self.dh_shared)
+        y = b64decode_aes_cgm_decrypt(rply.private_key, self.dh_shared)
 
         # decrypt with W' and extract rsa private key
         self.w2_salt, iv1, tag, cipher_private = y[:16], y[16:32], y[32:48], y[48:]
@@ -340,7 +349,7 @@ class Client:
         rqst.ip = IP_ADDR
         rqst.port = str(self.listen_port)
         self.server_sock.send(rqst.SerializeToString())
-        logger.debug('processed SERVER_PUBKEY rqst')
+        logger.debug('__handle_server_dhpub: Processed SERVER_PUBKEY rqst')
 
     """""
     Handle send command. We hav to query peer's public key and address first
@@ -351,6 +360,7 @@ class Client:
         self.server_expect['Query'].add(name)
         rqst = ClientToServer()
         rqst.type = ClientToServer.QUERY_PEER
+        rqst.time = int(time.time())
         rqst.name = name
         self.server_sock.send(utils.b64encode_aes_cgm_encrypt(rqst.SerializeToString(), self.dh_shared))
 
@@ -361,6 +371,7 @@ class Client:
         self.server_expect['List'] = True
         rqst = ClientToServer()
         rqst.type = ClientToServer.LIST
+        rqst.time = int(time.time())
         self.server_sock.send(utils.b64encode_aes_cgm_encrypt(rqst.SerializeToString(), self.dh_shared))
 
     """""
@@ -370,10 +381,16 @@ class Client:
         self.server_expect['Logout'] = True
         rqst = ClientToServer()
         rqst.type = ClientToServer.LOGOUT
+        rqst.time = int(time.time())
         self.server_sock.send(utils.b64encode_aes_cgm_encrypt(rqst.SerializeToString(), self.dh_shared))
 
-    def run(self):
+    def __login(self):
         try:
+            self.server_sock.connect((IP_ADDR, TCP_PORT))  # connect to server
+            rqst = ClientToServer()
+            rqst.type = ClientToServer.INITIATOR
+            rqst.name = self.name
+            self.server_sock.send(rqst.SerializeToString())
             while 1:
                 data = self.server_sock.recv(BUFFER_SIZE)
                 logger.debug('Receive auth msg')
@@ -384,39 +401,49 @@ class Client:
                     self.__handle_dos_salt(rqst, rply)
                 elif rply.type == ServerToClient.SERVER_PUBKEY:
                     self.__handle_server_dhpub(rqst, rply)
-                    break
+                    return True
                 elif rply.type == ServerToClient.ERROR:
                     print 'Error information from server: ' + rply.info
                     self.server_sock.close()
-                    return
+                    return False
                 else:
                     print 'Unsupported type: ' + rply.type
         except Exception as e:
             print 'Fail to authenticate. ', e
             self.server_sock.close()
+            return False
+
+    def run(self):
+        self.login = self.__login()
+        if not self.login:
             return
-        self.login = True
         server_handler = threading.Thread(target=self.__handle_server_sock)
         server_handler.start()
         peer_handler = threading.Thread(target=self.__handle_peer_sock)
         peer_handler.start()
 
-        while self.login:
-            user_cmd = raw_input()
-            res = self.prog.match(user_cmd)
-            trimmed = user_cmd.strip()
-            if trimmed == 'list':
-                self.__handle_list()
-            elif trimmed == 'logout':
-                self.__handle_logout()
-            elif res is not None and res.group(1) == 'send':
-                peer_name = res.group(2)
-                msg = res.group(3)
-                self.__handle_send(peer_name, msg)
-            elif len(trimmed) == 0:
-                continue
-            else:
-                print 'wrong cmd!'
+        try:
+            while self.login:
+                user_cmd = raw_input()
+                res = self.prog.match(user_cmd)
+                trimmed = user_cmd.strip()
+                if not self.login:
+                    print 'You are logout, exit program'
+                    return
+                if trimmed == 'list':
+                    self.__handle_list()
+                elif trimmed == 'logout':
+                    self.__handle_logout()
+                elif res is not None and res.group(1) == 'send':
+                    peer_name = res.group(2)
+                    msg = res.group(3)
+                    self.__handle_send(peer_name, msg)
+                elif len(trimmed) == 0:
+                    continue
+                else:
+                    print 'Wrong command!'
+        except Exception as e:
+            print 'Unexpected error: ', str(e)
 
 if __name__ == '__main__':
     user_name = raw_input('user name: ')

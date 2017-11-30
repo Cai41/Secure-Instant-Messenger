@@ -7,6 +7,8 @@ import os
 import base64
 import logging
 import utils
+import time
+from utils import b64encode_aes_cgm_encrypt
 from cryptography.exceptions import InvalidTag
 from instant_messenger_pb2 import *  # import the module created by protobuf for creating messages
 from cryptography.hazmat.primitives import hashes, serialization
@@ -18,9 +20,10 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 IP_ADDR = '127.0.0.1'  # use loopback interface
 TCP_PORT = 50550  # TCP port of server
 BUFFER_SIZE = 1024
+TIME_TOLERANCE = 15
 
 logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('Server')
 
 
 class Server:
@@ -29,7 +32,9 @@ class Server:
         self.sock.bind((IP_ADDR, TCP_PORT))  # bind to port
         self.sock.listen(1)  # listen with one pending connection
 
+        # each connection maps to a hashmap, which keySet are {expect, dh_shared_key, addr, challenge, name}
         self.client_conn = {}
+        # maps name to his/her ip address: name -> (ip, port)
         self.online_client = {}
         self.inputs = [self.sock]
         self.secret = os.urandom(16)
@@ -76,13 +81,13 @@ class Server:
                 digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
                 digest.update(self.client_conn[conn]['addr'][0].encode())
                 digest.update(self.secret)
-                rply.type = ServerToClient.DOS_SALT
                 rply.challenge = base64.b64encode(digest.finalize())
+                rply.type = ServerToClient.DOS_SALT
                 rply.salt = base64.b64encode(self.client_credentials[rqst.name]['w1_salt'])
         except Exception as e:
             rply.type = ServerToClient.ERROR
             rply.info = "Internal Error"
-            logger.error('Unknown error ' + str(e))
+            logger.error('__handle_initiator: Unknown error ' + str(e))
         conn.send(rply.SerializeToString())
         logger.debug('__handle_initiator: ' + rqst.name)
 
@@ -100,16 +105,16 @@ class Server:
         msg_digest = base64.b64encode(digest.finalize())
         if msg_digest != rqst.challenge:
             # log the DoS attack msg, and forget this connection
-            logger.error('__handle_user_dh_pubkey, wrong hash, possible DoS: ' + self.client_conn[conn]['name'])
+            logger.error('__handle_user_dh_pubkey: Wrong hash, possible DoS: ' + self.client_conn[conn]['name'])
             # forget the connection
-            self.client_conn.pop(conn, None)
             self.inputs.remove(conn)
+            self.client_conn.pop(conn, None)
+            conn.close()
         else:
             try:
                 # self.client_conn[conn]['client_pub'] = rqst.public_key
                 # generate its own DH key
                 server_dh_private_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
-                self.client_conn[conn]['server_pri'] = server_dh_private_key
                 # client's public DH key and shared DH key
                 client_dh_public = utils.deserialize_public_key(base64.b64decode(rqst.public_key))
                 # using self.client_conn[conn]['dh_shared_key'] as shared key for further encrypting
@@ -121,25 +126,25 @@ class Server:
                 server_dh_public_serialized = server_dh_private_key\
                     .public_key()\
                     .public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
-                utils.deserialize_public_key(server_dh_public_serialized)
 
                 rply.type = ServerToClient.SERVER_PUBKEY
-                rply.public_key = utils.b64encode_aes_cgm_encrypt(server_dh_public_serialized, w1)
+                rply.public_key = b64encode_aes_cgm_encrypt(server_dh_public_serialized, w1)
                 rply.challenge = base64.b64encode(self.client_conn[conn]['challenge'])
-                rply.private_key = utils.b64encode_aes_cgm_encrypt(self.client_credentials[name]['pri'],
-                                                                   self.client_conn[conn]['dh_shared_key'])
+                rply.private_key = b64encode_aes_cgm_encrypt(self.client_credentials[name]['pri'],
+                                                             self.client_conn[conn]['dh_shared_key'])
                 conn.send(rply.SerializeToString())
                 logger.debug('__handle_user_dh_pubkey: Successful send dh_pub key: ' + self.client_conn[conn]['name'])
             except Exception as e:
-                logger.error("__handle_user_dh_pubkey: Fail finishing authentication, closing client socket " + str(e))
-                self.client_conn.pop(conn, None)
-                self.inputs.remove(conn)
+                logger.error("__handle_user_dh_pubkey: Fail to finish authentication" + str(e))
+                rply.type = ServerToClient.ERROR
+                rply.info = "Fail to finish authentication"
+                conn.send(rply.SerializeToString())
 
     """""
     Client are sending last msg:Hash{g^ab mod p, c}sign.
     Server will verify the signature
     """""
-    def __handle_user_signedhash(self, rqst, conn):
+    def __handle_user_signedhash(self, rqst, rply, conn):
         try:
             self.client_conn[conn]['expect'] = None
             # compute the hash{g^ab mod p, c}
@@ -164,8 +169,9 @@ class Server:
             logger.debug('__handle_user_signedhash: Successful verified signature: ' + self.client_conn[conn]['name'])
         except Exception as e:
             logger.error('__handle_user_signedhash: Fail verify signature, closing client scoket ' + str(e))
-            self.client_conn.pop(conn, None)
-            self.inputs.remove(conn)
+            rply.type = ServerToClient.ERROR
+            rply.info = "Fail to verify signature"
+            conn.send(rply.SerializeToString())
 
     """""
     Handle users that are already connected
@@ -183,31 +189,39 @@ class Server:
                 elif rqst.type == ClientToServer.USER_PUBKEY:    # if it is public DH key:W{g^a mod p}, c
                     self.__handle_user_dh_pubkey(rqst, rply, conn)
                 elif rqst.type == ClientToServer.USER_SIGN:  # if it is signature of hash{g^ab mod p, c}
-                    self.__handle_user_signedhash(rqst, conn)
+                    self.__handle_user_signedhash(rqst, rply, conn)
         else:
             try:
                 # Otherwise it is a user command
                 content = utils.b64decode_aes_cgm_decrypt(data, self.client_conn[conn]['dh_shared_key'])
                 rqst.ParseFromString(content)
+                if abs(rqst.time - time.time()) > TIME_TOLERANCE:
+                    logger.warn('__handle_current_client: Message is outdated')
+                    return  # simply ignore outdated message
                 if rqst.type == ClientToServer.QUERY_PEER:  # query for public key and address
                     self.__handle_query_peer(rqst, rply, conn)
                 elif rqst.type == ClientToServer.LIST:   # list command
                     self.__handle_list(rqst, rply, conn)
                 elif rqst.type == ClientToServer.LOGOUT:  # logout command
-                    self.__handle_logout(rqst, rply, conn)
+                    self.__handle_logout(rply, conn)
             except InvalidTag:
                 rply.type = ServerToClient.ERROR
                 rply.info = "Invalid credential from client"
+                conn.send(b64encode_aes_cgm_encrypt(rply.SerializeToString(),
+                                                    self.client_conn[conn]['dh_shared_key']))
             except Exception as e:
                 logger.error('Unknown error ' + str(e))
                 rply.type = ServerToClient.ERROR
                 rply.info = "Internal Error"
+                conn.send(b64encode_aes_cgm_encrypt(rply.SerializeToString(),
+                                                    self.client_conn[conn]['dh_shared_key']))
 
     """""
     Hanlde querying peer. Reply with peer's public key and address
     """""
     def __handle_query_peer(self, rqst, rply, conn):
         name = rqst.name
+        rply.time = int(time.time())
         logger.debug('querying: ' + name)
         if name in self.online_client and name in self.client_credentials:
             rply.name = name
@@ -219,7 +233,7 @@ class Server:
 
             rply.public_key = base64.b64encode(public_key_bytes)
             rply.type = ServerToClient.REPLY_QUERY
-            logger.debug('send pubkey of ' + name)
+            logger.debug('__handle_query_peer: Send pubkey of ' + name)
         elif name not in self.client_credentials:
             rply.type = ServerToClient.ERROR
             rply.info = "No such user"
@@ -235,50 +249,52 @@ class Server:
         logger.debug('list rqst')
         rply.type = ServerToClient.REPLY_LIST
         rply.name = self.client_conn[conn]['name']
+        rply.time = int(time.time())
         for key in self.online_client:
             rply.name_list.append(key)
-        conn.send(utils.b64encode_aes_cgm_encrypt(rply.SerializeToString(), self.client_conn[conn]['dh_shared_key']))
+        conn.send(b64encode_aes_cgm_encrypt(rply.SerializeToString(), self.client_conn[conn]['dh_shared_key']))
 
     """""
     Handle logout msg
     """""
-    def __handle_logout(self, rqst, rply, conn):
+    def __handle_logout(self, rply, conn):
         self.online_client.pop(self.client_conn[conn]['name'])  # so that subsequent 'list' will not show this user
         rply.type = ServerToClient.LOGOUT
-        conn.send(utils.b64encode_aes_cgm_encrypt(rply.SerializeToString(), self.client_conn[conn]['dh_shared_key']))
+        rply.time = int(time.time())
+        conn.send(b64encode_aes_cgm_encrypt(rply.SerializeToString(), self.client_conn[conn]['dh_shared_key']))
 
     def run(self):
         while 1:
-            readable, _, _ = select.select(self.inputs, [], [], 1)
+            readable, _, _ = select.select(self.inputs, [], [], 2)
             for s in readable:
                 if s is self.sock:  # new client connects to server
                     conn, address = self.sock.accept()  # accept connection from client
-                    logger.debug('Connection address:' + str(address))
+                    logger.debug('run: Connection address:' + str(address))
                     #  start new thread to handle this connection
                     input_handler = threading.Thread(target=self.__handle_new_client, args=(conn, address))
                     input_handler.start()
                 else:
-                    logger.debug('Receive new data....')
+                    logger.debug('run: Receive new data....')
                     data = s.recv(BUFFER_SIZE)
                     if len(data) == 0:
                         # if receive empty data, it means client are closing socket
                         if 'name' not in self.client_conn[s]:
                             # This client hasn't finished authentication, but want closing socket
                             # Log this suspicious activity for security concern
-                            logger.error('Client wants to exist without finishing authentication')
+                            logger.error('run: Client wants to exist without finishing authentication')
                         elif self.client_conn[s]['name'] in self.online_client:
                             # This should not happen, since client should send logout nsg first before close the socket
                             # Log this suspicious activity for security concern
-                            logger.error('Unexpected logout, might be attack!')
+                            logger.error('run: Unexpected logout, might be attack!')
                         else:
                             # Client already send logout msg, safely close and delete socket
-                            logger.debug('Closing client socket...')
+                            logger.debug('run: Closing client socket...')
                         self.online_client.pop(self.client_conn[s].get('name', None), None)
-                        self.client_conn.pop(s)
                         self.inputs.remove(s)
+                        self.client_conn.pop(s, None)
                         s.close()
                     else:
-                        logger.debug('processing current client rqst')
+                        logger.debug('run: Processing current client rqst')
                         #  start new thread to handle this connection
                         input_handler = threading.Thread(target=self.__handle_current_client, args=(s, data))
                         input_handler.start()
