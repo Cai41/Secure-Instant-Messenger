@@ -1,0 +1,7 @@
+{
+  "SERVER_IP_ADDR": "127.0.0.1",
+  "SERVER_TCP_PORT": 50550,
+  "Client_IP_ADDR": "127.0.0.1",
+  "BUFFER_SIZE": 10240,
+  "TIME_TOLERANCE": 15
+}

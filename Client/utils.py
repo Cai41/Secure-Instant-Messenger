@@ -212,15 +212,25 @@ def add_batch(clear_password, database):
             add_entry(parts[0], parts[1].strip(), database)
 
 
-# load meta server information from json file
-def load_metadata(filename):
+# load meta information from json file
+def load_client_metadata(filename):
     data = json.load(open(filename))
-    IP_ADDR = data['IP_ADDR']
-    TCP_PORT = data['TCP_PORT']
+    SERVER_IP_ADDR = data['SERVER_IP_ADDR']
+    SERVER_TCP_PORT = data['SERVER_TCP_PORT']
+    Client_IP_ADDR = data['Client_IP_ADDR']
     BUFFER_SIZE = data['BUFFER_SIZE']
     TIME_TOLERANCE = data['TIME_TOLERANCE']
-    return [IP_ADDR, TCP_PORT, BUFFER_SIZE, TIME_TOLERANCE]
+    return [SERVER_IP_ADDR, SERVER_TCP_PORT, Client_IP_ADDR, BUFFER_SIZE, TIME_TOLERANCE]
 
+
+# load meta information from json file
+def load_server_metadata(filename):
+    data = json.load(open(filename))
+    SERVER_IP_ADDR = data['SERVER_IP_ADDR']
+    SERVER_TCP_PORT = data['SERVER_TCP_PORT']
+    BUFFER_SIZE = data['BUFFER_SIZE']
+    TIME_TOLERANCE = data['TIME_TOLERANCE']
+    return [SERVER_IP_ADDR, SERVER_TCP_PORT, BUFFER_SIZE, TIME_TOLERANCE]
 
 if __name__ == '__main__':
     add_batch('clear_password', 'database')

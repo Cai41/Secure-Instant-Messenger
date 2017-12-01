@@ -1,6 +1,0 @@
-{
-  "IP_ADDR": "127.0.0.1",
-  "TCP_PORT": 50550,
-  "BUFFER_SIZE": 10240,
-  "TIME_TOLERANCE": 15
-}

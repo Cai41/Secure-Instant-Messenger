@@ -16,7 +16,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, padding
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-IP_ADDR, TCP_PORT, BUFFER_SIZE, TIME_TOLERANCE = utils.load_metadata('ServerInfo.json')
+SERVER_IP_ADDR, SERVER_TCP_PORT, Client_IP_ADDR, BUFFER_SIZE, TIME_TOLERANCE = utils.load_client_metadata('ClientInfo.json')
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger('Client')
@@ -29,7 +29,7 @@ class Client:
 
         self.listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.listen_port = random.randrange(50000, 65535)
-        self.listen_sock.bind((IP_ADDR, self.listen_port))
+        self.listen_sock.bind((Client_IP_ADDR, self.listen_port))
         self.listen_sock.listen(1)
 
         self.peer_info = {}
@@ -346,7 +346,7 @@ class Client:
             hashes.SHA256()
         )
         rqst.sign = base64.b64encode(sign)
-        rqst.ip = IP_ADDR
+        rqst.ip = Client_IP_ADDR
         rqst.port = str(self.listen_port)
         self.server_sock.send(rqst.SerializeToString())
         logger.debug('__handle_server_dhpub: Processed SERVER_PUBKEY rqst')
@@ -386,7 +386,7 @@ class Client:
 
     def __login(self):
         try:
-            self.server_sock.connect((IP_ADDR, TCP_PORT))  # connect to server
+            self.server_sock.connect((SERVER_IP_ADDR, SERVER_TCP_PORT))  # connect to server
             rqst = ClientToServer()
             rqst.type = ClientToServer.INITIATOR
             rqst.name = self.name

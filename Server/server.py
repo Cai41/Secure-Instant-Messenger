@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, padding
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 
-IP_ADDR, TCP_PORT, BUFFER_SIZE, TIME_TOLERANCE = utils.load_metadata('ServerInfo.json')
+SERVER_IP_ADDR, SERVER_TCP_PORT, BUFFER_SIZE, TIME_TOLERANCE = utils.load_server_metadata('ServerInfo.json')
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger('Server')
@@ -26,7 +26,7 @@ logger = logging.getLogger('Server')
 class Server:
     def __init__(self, database):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.bind((IP_ADDR, TCP_PORT))  # bind to port
+        self.sock.bind((SERVER_IP_ADDR, SERVER_TCP_PORT))  # bind to port
         self.sock.listen(1)  # listen with one pending connection
 
         # each connection maps to a hashmap, which keySet are {expect, dh_shared_key, addr, challenge, name}
