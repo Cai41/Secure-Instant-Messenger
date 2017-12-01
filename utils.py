@@ -37,6 +37,7 @@ def password_to_w(salt, password, iteration, key_size):
     )
     return kdf.derive(password)
 
+
 # Serialize public key
 def serialize_public_key(public_key):
     pem = public_key.public_bytes(
@@ -44,6 +45,7 @@ def serialize_public_key(public_key):
         format=serialization.PublicFormat.SubjectPublicKeyInfo
     )
     return pem
+
 
 # load public key from key file
 def load_public(filename):
@@ -54,7 +56,6 @@ def load_public(filename):
         except (IOError, ValueError, TypeError, UnsupportedAlgorithm) as e:
             print 'fail reading key file', e
             raise e
-
 
 
 # load public key from string
@@ -106,6 +107,7 @@ def deserialize_private_key(content):
         raise e
 
 
+# encrypt the private key using AES_CGM
 def encrypt_private_key(private_key, password, salt):
         key = password_to_w(salt, password, w2_iteration, w2_length)
         # Only serialized key can be encrypted
@@ -117,15 +119,18 @@ def encrypt_private_key(private_key, password, salt):
         return salt + aes_cgm_random_iv(pem, key)
 
 
+# encrypt with AES_CTR, and base64 encode
 def b64encode_aes_ctr(content, key):
     return base64.b64encode(aes_ctr_random_iv(content, key))
 
 
+# encrypt with AES_CTR with random iv
 def aes_ctr_random_iv(content, key):
     iv = os.urandom(16)
     return iv + aes_ctr_encrypt(content, key, iv)
 
 
+# encrypt with AES_CTR with given iv
 def aes_ctr_encrypt(content, key, iv):
     cipher = Cipher(algorithms.AES(key),
                     modes.CTR(iv),
@@ -134,6 +139,7 @@ def aes_ctr_encrypt(content, key, iv):
     return encryptor.update(content) + encryptor.finalize()
 
 
+# decrypt with AES_CGM with given iv
 def aes_ctr_decrypt(cipher_content, key, iv):
     cipher = Cipher(algorithms.AES(key),
                     modes.CTR(iv),
@@ -177,19 +183,6 @@ def b64decode_aes_cgm_decrypt(content, key):
     return aes_cgm_decrypt(data, key, iv, tag)
 
 
-def decrypt_private_key(cipher_file, password):
-    salt = cipher_file[:16]
-    iv = cipher_file[16:32]
-    cipher_text = cipher_file[32:]
-
-    key = password_to_w(salt, password, w2_iteration, w2_length)
-    cipher = Cipher(algorithms.AES(key), modes.CTR(iv), backend=default_backend())
-    decryptor = cipher.decryptor()
-    text = decryptor.update(cipher_text) + decryptor.finalize()
-    private_key = deserialize_private_key(text)
-    return private_key
-
-
 def generateRSAkeys():
     private_key = rsa.generate_private_key(
         public_exponent = 65537,
@@ -199,6 +192,8 @@ def generateRSAkeys():
     public_key = private_key.public_key()
     return [public_key,private_key]
 
+
+# add one user entry to the database
 def add_entry(username, password, database):
     public_key,private_key=generateRSAkeys()
     salt1, salt2 = os.urandom(16), os.urandom(16)
@@ -208,42 +203,24 @@ def add_entry(username, password, database):
     with open(database, 'a') as datafile:
         datafile.write(username + '\t' + base64.b64encode(w1) + '\t' + base64.b64encode(y) + '\t'+base64.b64encode(public_key)+'\n')
 
+
 # Registering user and saving data
 def add_batch(clear_password, database):
     with open(clear_password, 'r') as pwdfile:
         for line in pwdfile:
             parts = line.split(":")
-            add_entry(parts[0], parts[1].strip(),database)
+            add_entry(parts[0], parts[1].strip(), database)
+
+
+# load meta server information from json file
+def load_metadata(filename):
+    data = json.load(open(filename))
+    IP_ADDR = data['IP_ADDR']
+    TCP_PORT = data['TCP_PORT']
+    BUFFER_SIZE = data['BUFFER_SIZE']
+    TIME_TOLERANCE = data['TIME_TOLERANCE']
+    return [IP_ADDR, TCP_PORT, BUFFER_SIZE, TIME_TOLERANCE]
+
 
 if __name__ == '__main__':
-    add_batch('clear_password','database')
-
-
-def test_read_entry(clear_password, database):
-    pwd_map = {}
-    with open(clear_password, 'r') as pwdfile:
-        for line in pwdfile:
-            parts = line.split(":")
-            pwd_map[parts[0]] = parts[1].strip()
-
-    with open(database, 'rb') as datafile:
-        for line in datafile:
-            parts = line.split('\t')
-            print parts[0]
-            w1 = base64.b64decode(parts[1])
-            y = base64.b64decode(parts[2])
-            kdf = PBKDF2HMAC(
-                algorithm=hashes.SHA256(),
-                length=w1_length,
-                salt=w1[:16],
-                iterations=w1_iteration,
-                backend=default_backend()
-            )
-            kdf.verify(pwd_map[parts[0]], w1[16:])
-
-def load_serverInfo(filename):
-    data = json.load(open(filename))
-    IP_ADDR=data['IP_ADDR']
-    TCP_PORT=data['TCP_PORT']
-    BUFFER_SIZE=data['BUFFER_SIZE']
-    return [IP_ADDR,TCP_PORT,BUFFER_SIZE]
+    add_batch('clear_password', 'database')

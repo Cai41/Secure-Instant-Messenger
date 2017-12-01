@@ -16,11 +16,11 @@ from cryptography.hazmat.primitives.asymmetric import ec, padding
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-IP_ADDR,TCP_PORT,BUFFER_SIZE=utils.load_serverInfo('ServerInfo.json')
-TIME_TOLERANCE = 15
+IP_ADDR, TCP_PORT, BUFFER_SIZE, TIME_TOLERANCE = utils.load_metadata('ServerInfo.json')
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger('Client')
+
 
 class Client:
     def __init__(self, name, password):
@@ -265,7 +265,7 @@ class Client:
                             logger.warn('__handle_peer_sock: Drop on unknown tyoe or timestamp is outdated')
 
     """""
-    Sends dh public key through socket s
+    Sends dh public key through sockets
     """""
     def __send_dh_pub(self, dh_private_key, rply_type, s):
         rply = ClientToClient()

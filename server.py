@@ -17,10 +17,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, padding
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 
-IP_ADDR = '127.0.0.1'  # use loopback interface
-TCP_PORT = 50550  # TCP port of server
-BUFFER_SIZE = 1024
-TIME_TOLERANCE = 15
+IP_ADDR, TCP_PORT, BUFFER_SIZE, TIME_TOLERANCE = utils.load_metadata('ServerInfo.json')
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger('Server')
