@@ -7,32 +7,44 @@ Prerequisites:
 - pyca/cryptography library
 - Google's protobuf
 
-There are two main files: client.py and server.py
-To run this program:
-1. Open two command prompts
-2. In one prompt, type
-`$ python server.py `
-3. In the second prompt, type
-`$ python client.py `
-4. Provide user credentials found below
+Scripts to install:
+`pip install cryptography`
+`pip install protobuf`
 
-### Supported Commands
+## Client/Server Configuration
+ClientInfo.json:
+  SERVER_IP_ADDR  : [Server's IP address],
+  SERVER_TCP_PORT : [Server's tcp port],
+  Client_IP_ADDR  : [Client's IP address],
+  BUFFER_SIZE     : [Buffer size for data transfer],
+  TIME_TOLERANCE  : [Time tolerance to prevent replay attack]
 
-List command prints out the names of all connected clients
+ServerInfo.json:
+  SERVER_IP_ADDR  : [Server's IP address],
+  SERVER_TCP_PORT : [Server's tcp port],
+  BUFFER_SIZE     : [Buffer size for data transfer],
+  TIME_TOLERANCE  : [Time tolerance to prevent replay attack]
 
-$ list
+## Program Execution
 
-Send command sends given message to a given client by name
+1. Run `$ python server.py `.
+2. Run `$ python client.py `.
+3. Provide user credentials found below in client program.
+4. Notice system starts logging behind-the-scene actions.
 
-$ send [Client name] [Message]
+### Supported Commands/Usages
 
-Logout command logs user out from the server
+Command                          : Description
+`$ list`                         : Prints out names of all connected clients
 
-$ Logout
+`$ send [Client name] [Message]` : Sends given message to the given client by name
+
+`$ logout`                       : Logs the current user out
 
 
 ## User Credentials
 All the credentials below are assumed to be pre-registered and registration of these credentials is not within the scope of the requirements
+Note: Read about add_batch method in utils class to learn about how to populate user database.
 
 Username:Password
 ------

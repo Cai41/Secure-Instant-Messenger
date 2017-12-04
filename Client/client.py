@@ -16,14 +16,18 @@ from cryptography.hazmat.primitives.asymmetric import ec, padding
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
+# Loading client configuration
 SERVER_IP_ADDR, SERVER_TCP_PORT, Client_IP_ADDR, BUFFER_SIZE, TIME_TOLERANCE = utils.load_client_metadata('ClientInfo.json')
 
+# Debugging config
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger('Client')
 
-
 class Client:
+    # Constructor
+    # Initializing sock and binding rules
     def __init__(self, name, password):
+        # Pattern matching for white spaces
         self.prog = re.compile('\s*(\S+)\s+(\S+)\s(.*)')
         self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -215,6 +219,7 @@ class Client:
     """""
     def __handle_peer_sock(self):
         while self.login:
+            # The select call listens to incoming connections.
             readable, _, _ = select.select(self.client_socks, [], [], 2)
             for s in readable:
                 if s is self.listen_sock:
@@ -383,7 +388,7 @@ class Client:
         rqst.type = ClientToServer.LOGOUT
         rqst.time = int(time.time())
         self.server_sock.send(utils.b64encode_aes_cgm_encrypt(rqst.SerializeToString(), self.dh_shared))
-
+    # Login procedures after user has provided username and password
     def __login(self):
         try:
             self.server_sock.connect((SERVER_IP_ADDR, SERVER_TCP_PORT))  # connect to server
@@ -412,7 +417,7 @@ class Client:
             print 'Fail to authenticate. ', e
             self.server_sock.close()
             return False
-
+    # Upon login, client creates two threads for handling signals from server and other clients
     def run(self):
         self.login = self.__login()
         if not self.login:
@@ -446,6 +451,7 @@ class Client:
             print 'Unexpected error: ', str(e)
 
 if __name__ == '__main__':
+    # Collect username and password
     user_name = raw_input('user name: ')
     user_pwd = raw_input('password: ')
     client = Client(user_name, user_pwd)

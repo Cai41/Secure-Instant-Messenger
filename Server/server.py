@@ -1,29 +1,34 @@
 #!/usr/bin/env python
 
-import socket
-import select
-import threading
-import os
 import base64
 import logging
-import utils
+import os
+import socket
+import threading
 import time
-from utils import b64encode_aes_cgm_encrypt
+
+import select
 from cryptography.exceptions import InvalidTag
-from instant_messenger_pb2 import *  # import the module created by protobuf for creating messages
-from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, padding
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
+import utils
+from instant_messenger_pb2 import *  # import the module created by protobuf for creating messages
+from utils import b64encode_aes_cgm_encrypt
 
+# Loading server configuration
 SERVER_IP_ADDR, SERVER_TCP_PORT, BUFFER_SIZE, TIME_TOLERANCE = utils.load_server_metadata('ServerInfo.json')
 
+# Debugging config
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger('Server')
 
 
 class Server:
+    # Constructor
+    # Initializing sock and binding rules
     def __init__(self, database):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.bind((SERVER_IP_ADDR, SERVER_TCP_PORT))  # bind to port
@@ -36,6 +41,7 @@ class Server:
         self.inputs = [self.sock]
         self.secret = os.urandom(16)
 
+        # Loads user credential database into memory
         self.client_credentials = {}
         with open(database, 'rb') as datafile:
             for line in datafile:
@@ -52,6 +58,7 @@ class Server:
     Handle new connection from listening socket, add the new socket to self.inputs list
     For each new connection, we are expecting hello msg from client(ClientToServer.INITIATOR)
     """""
+
     def __handle_new_client(self, conn, address):
         self.inputs.append(conn)
         self.client_conn[conn] = {'addr': address, 'expect': ClientToServer.INITIATOR}
@@ -61,6 +68,7 @@ class Server:
     Hello msg from client, e.g. A->Server: "Alice"
     Server will respond with challenge = Hash(ip, secret) and a salt for user to compute PBKDF2 derived key
     """""
+
     def __handle_initiator(self, rqst, rply, conn):
         try:
             # server are expecting user's public key form next msg, all other kind of msg will be ignored or warned
@@ -93,6 +101,7 @@ class Server:
     Server will check whether it is DoS first. If it is, it simply forget the connection
     Otherwise, it will generate its DH key, send: W{g^b mod p}, (g^ab mod p){Y}, c back to client
     """""
+
     def __handle_user_dh_pubkey(self, rqst, rply, conn):
         # server are expecting user's public key form next msg, all other kind of msg will be ignored or warned
         self.client_conn[conn]['expect'] = ClientToServer.USER_SIGN
@@ -100,6 +109,7 @@ class Server:
         digest.update(self.client_conn[conn]['addr'][0].encode())
         digest.update(self.secret)
         msg_digest = base64.b64encode(digest.finalize())
+        # Checking for Dos attack
         if msg_digest != rqst.challenge:
             # log the DoS attack msg, and forget this connection
             logger.error('__handle_user_dh_pubkey: Wrong hash, possible DoS: ' + self.client_conn[conn]['name'])
@@ -120,8 +130,8 @@ class Server:
 
                 name = self.client_conn[conn]['name']
                 w1 = self.client_credentials[name]['w1']
-                server_dh_public_serialized = server_dh_private_key\
-                    .public_key()\
+                server_dh_public_serialized = server_dh_private_key \
+                    .public_key() \
                     .public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
 
                 rply.type = ServerToClient.SERVER_PUBKEY
@@ -141,6 +151,7 @@ class Server:
     Client are sending last msg:Hash{g^ab mod p, c}sign.
     Server will verify the signature
     """""
+
     def __handle_user_signedhash(self, rqst, rply, conn):
         try:
             self.client_conn[conn]['expect'] = None
@@ -173,6 +184,7 @@ class Server:
     """""
     Handle users that are already connected
     """""
+
     def __handle_current_client(self, conn, data):
         rqst = ClientToServer()
         rply = ServerToClient()
@@ -183,21 +195,23 @@ class Server:
             if expect_type == rqst.type:
                 if rqst.type == ClientToServer.INITIATOR:  # if it is hello msg: "Alice"
                     self.__handle_initiator(rqst, rply, conn)
-                elif rqst.type == ClientToServer.USER_PUBKEY:    # if it is public DH key:W{g^a mod p}, c
+                elif rqst.type == ClientToServer.USER_PUBKEY:  # if it is public DH key:W{g^a mod p}, c
                     self.__handle_user_dh_pubkey(rqst, rply, conn)
                 elif rqst.type == ClientToServer.USER_SIGN:  # if it is signature of hash{g^ab mod p, c}
                     self.__handle_user_signedhash(rqst, rply, conn)
+        # User command
         else:
             try:
                 # Otherwise it is a user command
                 content = utils.b64decode_aes_cgm_decrypt(data, self.client_conn[conn]['dh_shared_key'])
                 rqst.ParseFromString(content)
+                # Replay check
                 if abs(rqst.time - time.time()) > TIME_TOLERANCE:
                     logger.warn('__handle_current_client: Message is outdated')
                     return  # simply ignore outdated message
                 if rqst.type == ClientToServer.QUERY_PEER:  # query for public key and address
                     self.__handle_query_peer(rqst, rply, conn)
-                elif rqst.type == ClientToServer.LIST:   # list command
+                elif rqst.type == ClientToServer.LIST:  # list command
                     self.__handle_list(rqst, rply, conn)
                 elif rqst.type == ClientToServer.LOGOUT:  # logout command
                     self.__handle_logout(rply, conn)
@@ -214,12 +228,14 @@ class Server:
                                                     self.client_conn[conn]['dh_shared_key']))
 
     """""
-    Hanlde querying peer. Reply with peer's public key and address
+    Handle querying peer. Reply with peer's public key and address
     """""
+
     def __handle_query_peer(self, rqst, rply, conn):
         name = rqst.name
         rply.time = int(time.time())
         logger.debug('querying: ' + name)
+        # If user exists and is online
         if name in self.online_client and name in self.client_credentials:
             rply.name = name
             rply.ip = self.online_client[name][0]
@@ -231,9 +247,11 @@ class Server:
             rply.public_key = base64.b64encode(public_key_bytes)
             rply.type = ServerToClient.REPLY_QUERY
             logger.debug('__handle_query_peer: Send pubkey of ' + name)
+        #     User does not exist
         elif name not in self.client_credentials:
             rply.type = ServerToClient.ERROR
             rply.info = "No such user"
+        #     User is not online
         else:
             rply.type = ServerToClient.ERROR
             rply.info = "User not online"
@@ -242,6 +260,7 @@ class Server:
     """""
     Handle list command. Reply with all login users
     """""
+
     def __handle_list(self, rqst, rply, conn):
         logger.debug('list rqst')
         rply.type = ServerToClient.REPLY_LIST
@@ -254,16 +273,20 @@ class Server:
     """""
     Handle logout msg
     """""
+
     def __handle_logout(self, rply, conn):
         self.online_client.pop(self.client_conn[conn]['name'])  # so that subsequent 'list' will not show this user
         rply.type = ServerToClient.LOGOUT
         rply.time = int(time.time())
         conn.send(b64encode_aes_cgm_encrypt(rply.SerializeToString(), self.client_conn[conn]['dh_shared_key']))
 
+    # This method constantly listens to incoming signals
     def run(self):
         while 1:
+            # The select call listens to incoming connections.
             readable, _, _ = select.select(self.inputs, [], [], 2)
             for s in readable:
+                # If the incoming call is for the binding server socket, establish TCP connection.
                 if s is self.sock:  # new client connects to server
                     conn, address = self.sock.accept()  # accept connection from client
                     logger.debug('run: Connection address:' + str(address))
@@ -273,12 +296,13 @@ class Server:
                 else:
                     logger.debug('run: Receive new data....')
                     data = s.recv(BUFFER_SIZE)
+                    # Closing socket. This happens when TCP is disconnected
                     if len(data) == 0:
                         # if receive empty data, it means client are closing socket
                         if 'name' not in self.client_conn[s]:
                             # This client hasn't finished authentication, but want closing socket
                             # Log this suspicious activity for security concern
-                            logger.error('run: Client wants to exist without finishing authentication')
+                            logger.error('run: Client wants to exit without finishing authentication')
                         elif self.client_conn[s]['name'] in self.online_client:
                             # This should not happen, since client should send logout nsg first before close the socket
                             # Log this suspicious activity for security concern
@@ -295,6 +319,7 @@ class Server:
                         #  start new thread to handle this connection
                         input_handler = threading.Thread(target=self.__handle_current_client, args=(s, data))
                         input_handler.start()
+
 
 if __name__ == '__main__':
     server = Server('database')
