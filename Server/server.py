@@ -280,6 +280,25 @@ class Server:
         rply.time = int(time.time())
         conn.send(b64encode_aes_cgm_encrypt(rply.SerializeToString(), self.client_conn[conn]['dh_shared_key']))
 
+    # Closing socket and clearing memory
+    def _closingConnection(self,s):
+        # if receive empty data, it means client are closing socket
+        if 'name' not in self.client_conn[s]:
+            # This client hasn't finished authentication, but want closing socket
+            # Log this suspicious activity for security concern
+            logger.error('run: Client wants to exit without finishing authentication')
+        elif self.client_conn[s]['name'] in self.online_client:
+            # This should not happen, since client should send logout nsg first before close the socket
+            # Log this suspicious activity for security concern
+            logger.error('run: Unexpected logout, might be attack!')
+        else:
+            # Client already send logout msg, safely close and delete socket
+            logger.debug('run: Closing client socket...')
+        self.online_client.pop(self.client_conn[s].get('name', None), None)
+        self.inputs.remove(s)
+        self.client_conn.pop(s, None)
+        s.close()
+
     # This method constantly listens to incoming signals
     def run(self):
         while 1:
@@ -294,31 +313,20 @@ class Server:
                     input_handler = threading.Thread(target=self.__handle_new_client, args=(conn, address))
                     input_handler.start()
                 else:
-                    logger.debug('run: Receive new data....')
-                    data = s.recv(BUFFER_SIZE)
-                    # Closing socket. This happens when TCP is disconnected
-                    if len(data) == 0:
-                        # if receive empty data, it means client are closing socket
-                        if 'name' not in self.client_conn[s]:
-                            # This client hasn't finished authentication, but want closing socket
-                            # Log this suspicious activity for security concern
-                            logger.error('run: Client wants to exit without finishing authentication')
-                        elif self.client_conn[s]['name'] in self.online_client:
-                            # This should not happen, since client should send logout nsg first before close the socket
-                            # Log this suspicious activity for security concern
-                            logger.error('run: Unexpected logout, might be attack!')
+                    try:
+                        logger.debug('run: Receive new data....')
+                        data = s.recv(BUFFER_SIZE)
+                        # Closing socket. This happens when TCP is disconnected
+                        if len(data) == 0:
+                            self._closingConnection(s)
                         else:
-                            # Client already send logout msg, safely close and delete socket
-                            logger.debug('run: Closing client socket...')
-                        self.online_client.pop(self.client_conn[s].get('name', None), None)
-                        self.inputs.remove(s)
-                        self.client_conn.pop(s, None)
-                        s.close()
-                    else:
-                        logger.debug('run: Processing current client rqst')
-                        #  start new thread to handle this connection
-                        input_handler = threading.Thread(target=self.__handle_current_client, args=(s, data))
-                        input_handler.start()
+                            logger.debug('run: Processing current client rqst')
+                            #  start new thread to handle this connection
+                            input_handler = threading.Thread(target=self.__handle_current_client, args=(s, data))
+                            input_handler.start()
+                    # Any exception results in closing connection.
+                    except:
+                        self._closingConnection(s)
 
 
 if __name__ == '__main__':

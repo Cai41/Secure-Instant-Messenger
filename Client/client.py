@@ -442,7 +442,10 @@ class Client:
                 elif res is not None and res.group(1) == 'send':
                     peer_name = res.group(2)
                     msg = res.group(3)
-                    self.__handle_send(peer_name, msg)
+                    if len(msg) > BUFFER_SIZE / 2:
+                        print "Input exceeding buffer size."
+                    else:
+                        self.__handle_send(peer_name, msg)
                 elif len(trimmed) == 0:
                     continue
                 else:
