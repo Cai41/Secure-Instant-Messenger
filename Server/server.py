@@ -301,32 +301,35 @@ class Server:
 
     # This method constantly listens to incoming signals
     def run(self):
-        while 1:
-            # The select call listens to incoming connections.
-            readable, _, _ = select.select(self.inputs, [], [], 2)
-            for s in readable:
-                # If the incoming call is for the binding server socket, establish TCP connection.
-                if s is self.sock:  # new client connects to server
-                    conn, address = self.sock.accept()  # accept connection from client
-                    logger.debug('run: Connection address:' + str(address))
-                    #  start new thread to handle this connection
-                    input_handler = threading.Thread(target=self.__handle_new_client, args=(conn, address))
-                    input_handler.start()
-                else:
-                    try:
-                        logger.debug('run: Receive new data....')
-                        data = s.recv(BUFFER_SIZE)
-                        # Closing socket. This happens when TCP is disconnected
-                        if len(data) == 0:
+        try:
+            while 1:
+                # The select call listens to incoming connections.
+                readable, _, _ = select.select(self.inputs, [], [], 2)
+                for s in readable:
+                    # If the incoming call is for the binding server socket, establish TCP connection.
+                    if s is self.sock:  # new client connects to server
+                        conn, address = self.sock.accept()  # accept connection from client
+                        logger.debug('run: Connection address:' + str(address))
+                        #  start new thread to handle this connection
+                        input_handler = threading.Thread(target=self.__handle_new_client, args=(conn, address))
+                        input_handler.start()
+                    else:
+                        try:
+                            logger.debug('run: Receive new data....')
+                            data = s.recv(BUFFER_SIZE)
+                            # Closing socket. This happens when TCP is disconnected
+                            if len(data) == 0:
+                                self._closingConnection(s)
+                            else:
+                                logger.debug('run: Processing current client rqst')
+                                #  start new thread to handle this connection
+                                input_handler = threading.Thread(target=self.__handle_current_client, args=(s, data))
+                                input_handler.start()
+                        # Any exception results in closing connection.
+                        except:
                             self._closingConnection(s)
-                        else:
-                            logger.debug('run: Processing current client rqst')
-                            #  start new thread to handle this connection
-                            input_handler = threading.Thread(target=self.__handle_current_client, args=(s, data))
-                            input_handler.start()
-                    # Any exception results in closing connection.
-                    except:
-                        self._closingConnection(s)
+        except:
+            logger.debug('Unexpected error continue.')
 
 
 if __name__ == '__main__':
