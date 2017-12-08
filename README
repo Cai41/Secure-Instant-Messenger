@@ -44,7 +44,6 @@ Command                          : Description
 
 ## User Credentials
 All the credentials below are assumed to be pre-registered and registration of these credentials is not within the scope of the requirements
-Note: Read about add_batch method in utils class to learn about how to populate user database.
 
 Username:Password
 ------

@@ -76,7 +76,10 @@ class Client:
     """""
     def __handle_server_sock(self):
         while self.login:
-            encrypted_data = self.server_sock.recv(BUFFER_SIZE)
+            try:
+                encrypted_data = self.server_sock.recv(BUFFER_SIZE)
+            except:
+                encrypted_data=''
             if len(encrypted_data) == 0:
                 # len(encrypted_data) == 0 means server is closing socket, so client can terminate program now
                 self.server_sock.close()
